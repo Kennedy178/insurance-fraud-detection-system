@@ -1,0 +1,13 @@
+# Core Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.5
+pydantic-settings==2.7.1
+
+# Machine Learning (I will add more later, this is just a start)
+scikit-learn==1.6.1
+pandas==2.2.3
+numpy==2.2.1
+
+# Development
+python-dotenv==1.0.1
