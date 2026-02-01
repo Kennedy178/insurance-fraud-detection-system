@@ -1,2 +1,4 @@
 /zextras/
 .env
+data/raw/*
+data/processed/*
