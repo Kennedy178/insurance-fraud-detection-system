@@ -15,7 +15,7 @@ def load_raw_data(filepath: str) -> pd.DataFrame:
     if 'FraudFound_P' not in df.columns:
         df['FraudFound_P'] = (df['FraudFound'] == 'Yes').astype(int)
     
-    print(f"✅ Loaded {len(df):,} records")
+    print(f" Loaded {len(df):,} records")
     return df
 
 
@@ -210,7 +210,7 @@ def preprocess_data(input_path: str, output_path: str) -> pd.DataFrame:
     
     # Save cleaned data
     df.to_csv(output_path, index=False)
-    print(f"\n✅ Cleaned data saved to: {output_path}")
+    print(f"\n Cleaned data saved to: {output_path}")
     
     return df
 
