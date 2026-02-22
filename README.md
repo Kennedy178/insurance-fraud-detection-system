@@ -42,7 +42,7 @@ Build a production-ready fraud detection system that can:
 
 - [x] Project setup
 - [x] Data acquisition
-- [ ] EDA & preprocessing
+- [x] EDA & preprocessing
 - [ ] Model training
 - [ ] Backend API
 - [ ] Frontend dashboard
