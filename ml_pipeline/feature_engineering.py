@@ -256,6 +256,7 @@ def one_hot_encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
     for col in ohe_features:
         if col in df.columns:
             # Get dummies with drop_first to avoid multicollinearity
+#If we only have 3 categories, & an item doesn't fall unto the first 2, then it belongs to the remaining one
             dummies = pd.get_dummies(df[col], prefix=col, drop_first=True)
             df = pd.concat([df, dummies], axis=1)
             print(f"✓ {col}: {df[col].nunique()} categories → {len(dummies.columns)} features")
