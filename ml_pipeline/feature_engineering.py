@@ -210,7 +210,7 @@ def create_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     df['DayOfWeek_numeric'] = df['DayOfWeek'].map(day_map)
     df['DayOfWeekClaimed_numeric'] = df['DayOfWeekClaimed'].map(day_map)
     
-    print(f"✓ Created 7 temporal features")
+    print(f" Created 7 temporal features")
     
     return df
 
