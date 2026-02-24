@@ -1,6 +1,6 @@
 """
 Feature Engineering Module
-Creates model-ready features from cleaned insurance data
+Creates model-ready features from previously cleaned insurance data
 """
 
 import pandas as pd
@@ -111,7 +111,7 @@ def encode_ordinal_features(df: pd.DataFrame) -> pd.DataFrame:
             # IT ALSO PRINTS A WARNING IF UNMAPPED VALUES ARE FOUND, SO I CAN KNOW IT HAPPENED
             unknown_values = set(df[col].unique()) - set(mapping.keys())
             if unknown_values:
-                print(f"  Warning: {col} has unmapped values: {unknown_values}")
+                print(f" Warning: {col} has unmapped values: {unknown_values}")
                 max_val = max(mapping.values())
                 for val in unknown_values:
                     mapping[val] = max_val + 1
