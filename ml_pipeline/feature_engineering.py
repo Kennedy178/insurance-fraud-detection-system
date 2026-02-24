@@ -28,12 +28,12 @@ def create_ordinal_mappings() -> Dict[str, Dict]:
         },
         
         'VehiclePrice': {
-            'less than 20000': 1,
-            '20000 to 29000': 2,
-            '30000 to 39000': 3,
-            '40000 to 59000': 4,
-            '60000 to 69000': 5,
-            'more than 69000': 6
+            'less than 20,000': 1,
+            '20,000 to 29,000': 2,
+            '30,000 to 39,000': 3,
+            '40,000 to 59,000': 4,
+            '60,000 to 69,000': 5,
+            'more than 69,000': 6
         },
         
         'AgeOfPolicyHolder': {
@@ -194,23 +194,32 @@ def create_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     # Claim filed same month as accident
     df['claim_same_month'] = (df['Month'] == df['MonthClaimed']).astype(int)
     
-    # Map month to numeric
+    
+    # Map month to numeric (handle "0" as unknown)
     month_map = {
         'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
-        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+        '0': 0  # Corrupt record - unknown month, mapped to 0 to avoid NaN
     }
     df['Month_numeric'] = df['Month'].map(month_map)
     df['MonthClaimed_numeric'] = df['MonthClaimed'].map(month_map)
     
+    # Fill any remaining NaN with 0 (safety)
+    df['Month_numeric'] = df['Month_numeric'].fillna(0)
+    df['MonthClaimed_numeric'] = df['MonthClaimed_numeric'].fillna(0)
+    
     # Day of week numeric (Monday=0, Sunday=6)
     day_map = {
         'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
-        'Friday': 4, 'Saturday': 5, 'Sunday': 6
+        'Friday': 4, 'Saturday': 5, 'Sunday': 6,
+        '0': -1  # Corrupt record - unknown day, mapped to -1 to avoid NaN (distinguishes from Monday=0)
     }
     df['DayOfWeek_numeric'] = df['DayOfWeek'].map(day_map)
     df['DayOfWeekClaimed_numeric'] = df['DayOfWeekClaimed'].map(day_map)
     
-    print(f" Created 7 temporal features")
+    # Fill any remaining NaN with -1 (safety)
+    df['DayOfWeek_numeric'] = df['DayOfWeek_numeric'].fillna(-1)
+    df['DayOfWeekClaimed_numeric'] = df['DayOfWeekClaimed_numeric'].fillna(-1)
     
     return df
 
