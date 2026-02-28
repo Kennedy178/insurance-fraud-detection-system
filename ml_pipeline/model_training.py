@@ -326,7 +326,7 @@ def train_logistic_regression(X_train, y_train, X_val, y_val, random_state=42):
     )
     
     lr_model.fit(X_train, y_train)
-    print("✓ Model trained")
+    print(" Model trained")
     
     # Predict on validation set
     y_val_pred = lr_model.predict(X_val)
@@ -388,7 +388,7 @@ def train_random_forest(X_train, y_train, X_val, y_val, random_state=42):
     )
     
     rf_model.fit(X_train, y_train)
-    print("✓ Model trained")
+    print(" Model trained")
     
     # Predict on validation set
     y_val_pred = rf_model.predict(X_val)
@@ -452,7 +452,7 @@ def compare_baseline_models(lr_metrics, rf_metrics):
     best_model = comparison.loc[best_f1_idx, 'model']
     best_f1 = comparison.loc[best_f1_idx, 'f1_score']
     
-    print(f"\n🏆 Best Baseline Model: {best_model}")
+    print(f"\n Best Baseline Model: {best_model}")
     print(f"   F1-Score: {best_f1:.4f}")
     
     return comparison
