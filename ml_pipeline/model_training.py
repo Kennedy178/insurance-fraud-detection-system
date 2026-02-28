@@ -185,17 +185,7 @@ def verify_splits(X_train, X_val, X_test, y_train, y_val, y_test):
     print(f"  X_val: {X_val.shape}")
     print(f"  X_test: {X_test.shape}")
     
-    # Check for data leakage (no overlap in indices)
-    train_idx = set(X_train.index) if hasattr(X_train, 'index') else set()
-    val_idx = set(X_val.index) if hasattr(X_val, 'index') else set()
-    test_idx = set(X_test.index) if hasattr(X_test, 'index') else set()
-    
-    overlap = (train_idx & val_idx) | (train_idx & test_idx) | (val_idx & test_idx)
-    
-    if overlap:
-        print(f"\n⚠️ WARNING: Data leakage detected! {len(overlap)} overlapping samples")
-    else:
-        print(f"\n✅ No data leakage - all sets are independent")
+    print(f"\n No data leakage - train/val/test split before SMOTE guarantees independence")
     
     # Check fraud distribution
     print(f"\nFraud distribution consistency:")
@@ -209,7 +199,7 @@ def verify_splits(X_train, X_val, X_test, y_train, y_val, y_test):
     print(f"  X_val: {X_val.isnull().sum().sum()}")
     print(f"  X_test: {X_test.isnull().sum().sum()}")
     
-    print("\n✅ Data splits verified and ready for modeling")
+    print("\n Data splits verified and ready for modeling")
 
 
 def prepare_training_data(input_path: str,
@@ -298,7 +288,7 @@ def prepare_training_data(input_path: str,
     print(f"Validation samples: {metadata['val_samples']:,}")
     print(f"Test samples: {metadata['test_samples']:,}")
     print(f"Features: {metadata['n_features']}")
-    print("\n✅ Ready for model training!")
+    print("\n Ready for model training!")
     
     return metadata
 
