@@ -12,6 +12,14 @@ from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline as ImbPipeline
 import joblib
 from typing import Tuple
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
+    confusion_matrix, classification_report, roc_curve
+)
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 def load_engineered_data(filepath: str) -> Tuple[pd.DataFrame, pd.Series]:
     """
@@ -293,23 +301,311 @@ def prepare_training_data(input_path: str,
     return metadata
 
 
-if __name__ == "__main__":
-    # Run data preparation
-    input_file = '../data/processed/insurance_claims_engineered.csv'
-    output_dir = '../data/processed/'
+def train_logistic_regression(X_train, y_train, X_val, y_val, random_state=42):
+    """
+    Train Logistic Regression baseline model
     
-    # Prepare data with SMOTE (50:50 balance)
-    metadata = prepare_training_data(
-        input_path=input_file,
-        output_dir=output_dir,
-        sampling_method='smote',  # Can change to 'undersample' or 'combined'
-        sampling_strategy=0.5,    # 50:50 balance
-        random_state=42
+    Args:
+        X_train, y_train: Training data (balanced)
+        X_val, y_val: Validation data (unbalanced)
+        random_state: Random seed
+    
+    Returns:
+        Trained model and evaluation metrics
+    """
+    print("\n" + "="*60)
+    print("TRAINING LOGISTIC REGRESSION BASELINE")
+    print("="*60)
+    
+    # Train model
+    print("\nTraining Logistic Regression...")
+    lr_model = LogisticRegression(
+        random_state=random_state,
+        max_iter=1000,  # Increase for convergence
+        solver='lbfgs'
     )
     
+    lr_model.fit(X_train, y_train)
+    print("✓ Model trained")
+    
+    # Predict on validation set
+    y_val_pred = lr_model.predict(X_val)
+    y_val_proba = lr_model.predict_proba(X_val)[:, 1]
+    
+    # Calculate metrics
+    metrics = {
+        'model': 'Logistic Regression',
+        'accuracy': accuracy_score(y_val, y_val_pred),
+        'precision': precision_score(y_val, y_val_pred),
+        'recall': recall_score(y_val, y_val_pred),
+        'f1_score': f1_score(y_val, y_val_pred),
+        'roc_auc': roc_auc_score(y_val, y_val_proba)
+    }
+    
+    # Print metrics
+    print("\n=== VALIDATION SET PERFORMANCE ===")
+    print(f"Accuracy:  {metrics['accuracy']:.4f}")
+    print(f"Precision: {metrics['precision']:.4f}")
+    print(f"Recall:    {metrics['recall']:.4f}")
+    print(f"F1-Score:  {metrics['f1_score']:.4f}")
+    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
+    
+    # Confusion Matrix
+    cm = confusion_matrix(y_val, y_val_pred)
+    print("\nConfusion Matrix:")
+    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
+    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
+    
+    # Classification Report
+    print("\nClassification Report:")
+    print(classification_report(y_val, y_val_pred, target_names=['Legitimate', 'Fraud']))
+    
+    return lr_model, metrics, y_val_pred, y_val_proba
+
+
+def train_random_forest(X_train, y_train, X_val, y_val, random_state=42):
+    """
+    Train Random Forest baseline model
+    
+    Args:
+        X_train, y_train: Training data (balanced)
+        X_val, y_val: Validation data (unbalanced)
+        random_state: Random seed
+    
+    Returns:
+        Trained model, metrics, and feature importances
+    """
     print("\n" + "="*60)
-    print("METADATA SUMMARY")
+    print("TRAINING RANDOM FOREST BASELINE")
     print("="*60)
-    for key, value in metadata.items():
-        if key not in ['X_train', 'X_val', 'X_test', 'y_train', 'y_val', 'y_test', 'feature_names']:
-            print(f"{key}: {value}")
+    
+    # Train model
+    print("\nTraining Random Forest...")
+    rf_model = RandomForestClassifier(
+        n_estimators=100,  # Default
+        random_state=random_state,
+        n_jobs=-1  # Use all CPU cores
+    )
+    
+    rf_model.fit(X_train, y_train)
+    print("✓ Model trained")
+    
+    # Predict on validation set
+    y_val_pred = rf_model.predict(X_val)
+    y_val_proba = rf_model.predict_proba(X_val)[:, 1]
+    
+    # Calculate metrics
+    metrics = {
+        'model': 'Random Forest',
+        'accuracy': accuracy_score(y_val, y_val_pred),
+        'precision': precision_score(y_val, y_val_pred),
+        'recall': recall_score(y_val, y_val_pred),
+        'f1_score': f1_score(y_val, y_val_pred),
+        'roc_auc': roc_auc_score(y_val, y_val_proba)
+    }
+    
+    # Print metrics
+    print("\n=== VALIDATION SET PERFORMANCE ===")
+    print(f"Accuracy:  {metrics['accuracy']:.4f}")
+    print(f"Precision: {metrics['precision']:.4f}")
+    print(f"Recall:    {metrics['recall']:.4f}")
+    print(f"F1-Score:  {metrics['f1_score']:.4f}")
+    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
+    
+    # Confusion Matrix
+    cm = confusion_matrix(y_val, y_val_pred)
+    print("\nConfusion Matrix:")
+    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
+    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
+    
+    # Classification Report
+    print("\nClassification Report:")
+    print(classification_report(y_val, y_val_pred, target_names=['Legitimate', 'Fraud']))
+    
+    # Feature Importances
+    feature_importance = pd.DataFrame({
+        'feature': X_train.columns,
+        'importance': rf_model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print("\n=== TOP 10 MOST IMPORTANT FEATURES ===")
+    print(feature_importance.head(10).to_string(index=False))
+    
+    return rf_model, metrics, y_val_pred, y_val_proba, feature_importance
+
+
+def compare_baseline_models(lr_metrics, rf_metrics):
+    """Compare performance of baseline models"""
+    print("\n" + "="*60)
+    print("BASELINE MODEL COMPARISON")
+    print("="*60)
+    
+    # Create comparison DataFrame
+    comparison = pd.DataFrame([lr_metrics, rf_metrics])
+    comparison = comparison[['model', 'accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']]
+    
+    print("\n")
+    print(comparison.to_string(index=False))
+    
+    # Identify best model
+    best_f1_idx = comparison['f1_score'].idxmax()
+    best_model = comparison.loc[best_f1_idx, 'model']
+    best_f1 = comparison.loc[best_f1_idx, 'f1_score']
+    
+    print(f"\n🏆 Best Baseline Model: {best_model}")
+    print(f"   F1-Score: {best_f1:.4f}")
+    
+    return comparison
+
+
+def plot_confusion_matrices(y_val, y_lr_pred, y_rf_pred, save_path='../data/processed/'):
+    """Plot confusion matrices for both baseline models"""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Logistic Regression
+    cm_lr = confusion_matrix(y_val, y_lr_pred)
+    sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', ax=axes[0],
+                xticklabels=['Legitimate', 'Fraud'],
+                yticklabels=['Legitimate', 'Fraud'])
+    axes[0].set_title('Logistic Regression\nConfusion Matrix', fontweight='bold')
+    axes[0].set_ylabel('True Label')
+    axes[0].set_xlabel('Predicted Label')
+    
+    # Random Forest
+    cm_rf = confusion_matrix(y_val, y_rf_pred)
+    sns.heatmap(cm_rf, annot=True, fmt='d', cmap='Greens', ax=axes[1],
+                xticklabels=['Legitimate', 'Fraud'],
+                yticklabels=['Legitimate', 'Fraud'])
+    axes[1].set_title('Random Forest\nConfusion Matrix', fontweight='bold')
+    axes[1].set_ylabel('True Label')
+    axes[1].set_xlabel('Predicted Label')
+    
+    plt.tight_layout()
+    plt.savefig(f'{save_path}/baseline_confusion_matrices.png', dpi=300, bbox_inches='tight')
+    print(f"✓ Confusion matrices saved to {save_path}/baseline_confusion_matrices.png")
+    plt.show()
+
+
+def plot_roc_curves(y_val, y_lr_proba, y_rf_proba, lr_auc, rf_auc, save_path='../data/processed/'):
+    """Plot ROC curves for both baseline models"""
+    plt.figure(figsize=(10, 6))
+    
+    # Logistic Regression ROC
+    fpr_lr, tpr_lr, _ = roc_curve(y_val, y_lr_proba)
+    plt.plot(fpr_lr, tpr_lr, label=f'Logistic Regression (AUC = {lr_auc:.4f})', 
+             linewidth=2, color='blue')
+    
+    # Random Forest ROC
+    fpr_rf, tpr_rf, _ = roc_curve(y_val, y_rf_proba)
+    plt.plot(fpr_rf, tpr_rf, label=f'Random Forest (AUC = {rf_auc:.4f})', 
+             linewidth=2, color='green')
+    
+    # Diagonal (random baseline)
+    plt.plot([0, 1], [0, 1], 'k--', label='Random Baseline', linewidth=1)
+    
+    plt.xlabel('False Positive Rate', fontsize=12)
+    plt.ylabel('True Positive Rate', fontsize=12)
+    plt.title('ROC Curves - Baseline Models', fontsize=14, fontweight='bold')
+    plt.legend(loc='lower right', fontsize=10)
+    plt.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(f'{save_path}/baseline_roc_curves.png', dpi=300, bbox_inches='tight')
+    print(f"✓ ROC curves saved to {save_path}/baseline_roc_curves.png")
+    plt.show()
+
+
+def train_baseline_models():
+    """Complete baseline model training pipeline"""
+    print("="*60)
+    print("BASELINE MODEL TRAINING PIPELINE")
+    print("="*60)
+    
+    # Load prepared data
+    print("\nLoading prepared datasets...")
+    train_df = pd.read_csv('../data/processed/train_balanced.csv')
+    val_df = pd.read_csv('../data/processed/validation.csv')
+    
+    X_train = train_df.drop('FraudFound_P', axis=1)
+    y_train = train_df['FraudFound_P']
+    X_val = val_df.drop('FraudFound_P', axis=1)
+    y_val = val_df['FraudFound_P']
+    
+    print(f"✓ Training data: {X_train.shape}")
+    print(f"✓ Validation data: {X_val.shape}")
+    
+    # Train Logistic Regression
+    lr_model, lr_metrics, y_lr_pred, y_lr_proba = train_logistic_regression(
+        X_train, y_train, X_val, y_val
+    )
+    
+    # Train Random Forest
+    rf_model, rf_metrics, y_rf_pred, y_rf_proba, rf_feature_imp = train_random_forest(
+        X_train, y_train, X_val, y_val
+    )
+    
+    # Compare models
+    comparison = compare_baseline_models(lr_metrics, rf_metrics)
+    
+    # Save comparison table
+    comparison.to_csv('../data/processed/baseline_comparison.csv', index=False)
+    print("\n✓ Comparison table saved to ../data/processed/baseline_comparison.csv")
+    
+    # Plot visualizations
+    plot_confusion_matrices(y_val, y_lr_pred, y_rf_pred)
+    plot_roc_curves(y_val, y_lr_proba, y_rf_proba, lr_metrics['roc_auc'], rf_metrics['roc_auc'])
+    
+    # Save feature importances
+    rf_feature_imp.to_csv('../data/processed/rf_feature_importance.csv', index=False)
+    print("\n✓ Feature importances saved to ../data/processed/rf_feature_importance.csv")
+    
+    # Save models
+    joblib.dump(lr_model, '../models/logistic_regression_baseline.pkl')
+    joblib.dump(rf_model, '../models/random_forest_baseline.pkl')
+    print("\n✓ Models saved:")
+    print("  - ../models/logistic_regression_baseline.pkl")
+    print("  - ../models/random_forest_baseline.pkl")
+    
+    print("\n" + "="*60)
+    print("BASELINE TRAINING COMPLETE")
+    print("="*60)
+    
+    return {
+        'lr_model': lr_model,
+        'rf_model': rf_model,
+        'lr_metrics': lr_metrics,
+        'rf_metrics': rf_metrics,
+        'comparison': comparison,
+        'rf_feature_importance': rf_feature_imp
+    }
+
+
+if __name__ == "__main__":
+    import sys
+    
+    # Check command line argument
+    if len(sys.argv) > 1 and sys.argv[1] == 'baseline':
+        # Train baseline models
+        results = train_baseline_models()
+    else:
+        # Run data preparation (Day 8 task)
+        input_file = '../data/processed/insurance_claims_engineered.csv'
+        output_dir = '../data/processed/'
+        
+        metadata = prepare_training_data(
+            input_path=input_file,
+            output_dir=output_dir,
+            sampling_method='smote',
+            sampling_strategy=0.5,
+            random_state=42
+        )
+        
+        print("\n" + "="*60)
+        print("METADATA SUMMARY")
+        print("="*60)
+        for key, value in metadata.items():
+            if key not in ['X_train', 'X_val', 'X_test', 'y_train', 'y_val', 'y_test', 'feature_names']:
+                print(f"{key}: {value}")
+        
+        print("\n💡 To train baseline models, run:")
+        print("   python model_training.py baseline")
