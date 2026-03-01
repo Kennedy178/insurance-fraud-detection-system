@@ -1,8 +1,10 @@
 """
-Model Training Module
+Model Training Module - CORRECTED VERSION
 Handles train-test split, class imbalance, and model training preparation
+Fixed: No SMOTE, proper class weights, correct eval metrics
 """
-
+import json
+import os
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -42,7 +44,7 @@ def load_engineered_data(filepath: str) -> Tuple[pd.DataFrame, pd.Series]:
     X = df.drop('FraudFound_P', axis=1)
     y = df['FraudFound_P']
     
-    print(f" Loaded engineered data")
+    print(f"✓ Loaded engineered data")
     print(f"Features: {X.shape[1]}")
     print(f"Samples: {len(X):,}")
     print(f"Fraud cases: {y.sum():,} ({y.mean()*100:.2f}%)")
@@ -105,16 +107,16 @@ def split_data(X: pd.DataFrame,
 
 def handle_class_imbalance(X_train: pd.DataFrame,
                            y_train: pd.Series,
-                           method: str = 'smote',
+                           method: str = 'none',
                            sampling_strategy: float = 0.5,
                            random_state: int = 42) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Handle class imbalance using SMOTE or combined sampling
+    Handle class imbalance using SMOTE, undersampling, or none (use class weights instead)
     
     Args:
         X_train: Training features
         y_train: Training target
-        method: 'smote', 'undersample', or 'combined'
+        method: 'smote', 'undersample', 'combined', or 'none'
         sampling_strategy: Target ratio of minority/majority (0.5 = 50:50)
         random_state: Random seed
     
@@ -134,8 +136,15 @@ def handle_class_imbalance(X_train: pd.DataFrame,
     print(f"  Ratio: 1:{int(1/initial_ratio)}")
     print(f"  Imbalance: {(1-initial_ratio)*100:.1f}% skew")
     
+    # CORRECTED: Added 'none' option - no resampling, use class weights instead
+    if method == 'none':
+        print(f"\n✓ No resampling applied - keeping original imbalanced distribution")
+        print(f"  Models will use built-in class weights (scale_pos_weight) to handle imbalance")
+        print(f"  This approach works better for tree-based models (XGBoost, LightGBM)")
+        return X_train, y_train
+    
     # Apply sampling method
-    if method == 'smote':
+    elif method == 'smote':
         # SMOTE: Synthetic Minority Over-sampling
         sampler = SMOTE(
             sampling_strategy=sampling_strategy,
@@ -167,25 +176,26 @@ def handle_class_imbalance(X_train: pd.DataFrame,
         print(f"\n✓ Applied Combined (SMOTE + Under-sampling)")
     
     else:
-        raise ValueError(f"Unknown method: {method}. Use 'smote', 'undersample', or 'combined'")
+        raise ValueError(f"Unknown method: {method}. Use 'none', 'smote', 'undersample', or 'combined'")
     
-    # Calculate new distribution
-    fraud_count_new = y_resampled.sum()
-    legit_count_new = len(y_resampled) - fraud_count_new
-    new_ratio = fraud_count_new / legit_count_new
-    
-    print(f"\nAfter balancing:")
-    print(f"  Legitimate: {legit_count_new:,}")
-    print(f"  Fraud: {fraud_count_new:,}")
-    print(f"  Ratio: 1:{legit_count_new/fraud_count_new:.1f}")
-    print(f"  Balance: {new_ratio*100:.1f}% fraud / {(1-new_ratio)*100:.1f}% legitimate")
-    print(f"  Total samples: {len(X_resampled):,} (from {len(X_train):,})")
-    
-    # Convert back to DataFrame with proper column names
-    X_resampled = pd.DataFrame(X_resampled, columns=X_train.columns)
-    y_resampled = pd.Series(y_resampled, name='FraudFound_P')
-    
-    return X_resampled, y_resampled
+    # Calculate new distribution (only if resampling was applied)
+    if method != 'none':
+        fraud_count_new = y_resampled.sum()
+        legit_count_new = len(y_resampled) - fraud_count_new
+        new_ratio = fraud_count_new / legit_count_new
+        
+        print(f"\nAfter balancing:")
+        print(f"  Legitimate: {legit_count_new:,}")
+        print(f"  Fraud: {fraud_count_new:,}")
+        print(f"  Ratio: 1:{legit_count_new/fraud_count_new:.1f}")
+        print(f"  Balance: {new_ratio*100:.1f}% fraud / {(1-new_ratio)*100:.1f}% legitimate")
+        print(f"  Total samples: {len(X_resampled):,} (from {len(X_train):,})")
+        
+        # Convert back to DataFrame with proper column names
+        X_resampled = pd.DataFrame(X_resampled, columns=X_train.columns)
+        y_resampled = pd.Series(y_resampled, name='FraudFound_P')
+        
+        return X_resampled, y_resampled
 
 
 def verify_splits(X_train, X_val, X_test, y_train, y_val, y_test):
@@ -198,7 +208,7 @@ def verify_splits(X_train, X_val, X_test, y_train, y_val, y_test):
     print(f"  X_val: {X_val.shape}")
     print(f"  X_test: {X_test.shape}")
     
-    print(f"\n No data leakage - train/val/test split before SMOTE guarantees independence")
+    print(f"\n✓ No data leakage - train/val/test split before any sampling")
     
     # Check fraud distribution
     print(f"\nFraud distribution consistency:")
@@ -212,486 +222,111 @@ def verify_splits(X_train, X_val, X_test, y_train, y_val, y_test):
     print(f"  X_val: {X_val.isnull().sum().sum()}")
     print(f"  X_test: {X_test.isnull().sum().sum()}")
     
-    print("\n Data splits verified and ready for modeling")
+    print(f"\n✓ Data ready for training")
 
 
 def prepare_training_data(input_path: str,
-                         output_dir: str = '../data/processed/',
-                         sampling_method: str = 'smote',
-                         sampling_strategy: float = 0.5,
-                         random_state: int = 42) -> dict:
+                          output_dir: str,
+                          sampling_method: str = 'none',
+                          sampling_strategy: float = 0.5,
+                          random_state: int = 42) -> dict:
     """
-    Complete data preparation pipeline for model training
+    Complete data preparation pipeline
     
     Args:
-        input_path: Path to engineered CSV
-        output_dir: Directory to save split datasets
-        sampling_method: 'smote', 'undersample', or 'combined'
-        sampling_strategy: Target minority/majority ratio
+        input_path: Path to engineered features CSV
+        output_dir: Directory to save train/val/test sets
+        sampling_method: 'none', 'smote', 'undersample', or 'combined'
+        sampling_strategy: Resampling ratio (ignored if method='none')
         random_state: Random seed
     
     Returns:
-        Dictionary with all splits and metadata
+        metadata dict with split information
     """
     print("="*60)
-    print("PREPARING DATA FOR MODEL TRAINING")
+    print("DATA PREPARATION PIPELINE")
     print("="*60)
     
-    # Step 1: Load engineered data
+    # Load data
     X, y = load_engineered_data(input_path)
     
-    # Step 2: Split into train, val, test
-    X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y, random_state=random_state)
+    # Split data
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(
+        X, y, 
+        test_size=0.15, 
+        val_size=0.15,
+        random_state=random_state
+    )
     
-    # Step 3: Handle class imbalance (ONLY on training set)
-    X_train_balanced, y_train_balanced = handle_class_imbalance(
+    # Handle class imbalance (or not, if method='none')
+    X_train_processed, y_train_processed = handle_class_imbalance(
         X_train, y_train,
         method=sampling_method,
         sampling_strategy=sampling_strategy,
         random_state=random_state
     )
     
-    # Step 4: Verify everything
-    verify_splits(X_train_balanced, X_val, X_test, y_train_balanced, y_val, y_test)
+    # Verify splits
+    verify_splits(X_train_processed, X_val, X_test, y_train_processed, y_val, y_test)
     
-    # Step 5: Save all splits
+    # Save datasets
     print("\n=== SAVING DATASETS ===")
     
-    # Save training data (balanced)
-    train_data = pd.concat([X_train_balanced, y_train_balanced], axis=1)
-    train_path = f"{output_dir}/train_balanced.csv"
-    train_data.to_csv(train_path, index=False)
-    print(f"✓ Training (balanced): {train_path}")
+    # Training set (processed - may or may not be resampled)
+    train_df = pd.concat([X_train_processed, y_train_processed], axis=1)
+    train_path = f"{output_dir}/train_processed.csv"
+    train_df.to_csv(train_path, index=False)
+    print(f"✓ Training set saved: {train_path}")
+    print(f"  Shape: {train_df.shape}")
     
-    # Save validation data (unbalanced - realistic)
-    val_data = pd.concat([X_val, y_val], axis=1)
+    # Validation set (always original, never resampled)
+    val_df = pd.concat([X_val, y_val], axis=1)
     val_path = f"{output_dir}/validation.csv"
-    val_data.to_csv(val_path, index=False)
-    print(f"✓ Validation: {val_path}")
+    val_df.to_csv(val_path, index=False)
+    print(f"✓ Validation set saved: {val_path}")
+    print(f"  Shape: {val_df.shape}")
     
-    # Save test data (unbalanced - realistic)
-    test_data = pd.concat([X_test, y_test], axis=1)
+    # Test set (always original, never resampled)
+    test_df = pd.concat([X_test, y_test], axis=1)
     test_path = f"{output_dir}/test.csv"
-    test_data.to_csv(test_path, index=False)
-    print(f"✓ Test: {test_path}")
+    test_df.to_csv(test_path, index=False)
+    print(f"✓ Test set saved: {test_path}")
+    print(f"  Shape: {test_df.shape}")
     
     # Create metadata
     metadata = {
-        'X_train': X_train_balanced,
-        'X_val': X_val,
-        'X_test': X_test,
-        'y_train': y_train_balanced,
-        'y_val': y_val,
-        'y_test': y_test,
-        'feature_names': list(X.columns),
+        'total_samples': len(X),
         'n_features': X.shape[1],
-        'train_samples': len(X_train_balanced),
+        'train_samples': len(X_train_processed),
         'val_samples': len(X_val),
         'test_samples': len(X_test),
         'original_fraud_rate': y.mean(),
-        'train_fraud_rate': y_train_balanced.mean(),
+        'train_fraud_rate': y_train_processed.mean(),
         'val_fraud_rate': y_val.mean(),
         'test_fraud_rate': y_test.mean(),
+        'sampling_method': sampling_method,
+        'sampling_strategy': sampling_strategy if sampling_method != 'none' else 'N/A',
+        'random_state': random_state
     }
+    
+    # Save metadata
+    metadata_df = pd.DataFrame([metadata])
+    metadata_path = f"{output_dir}/split_metadata.csv"
+    metadata_df.to_csv(metadata_path, index=False)
+    print(f"✓ Metadata saved: {metadata_path}")
     
     print("\n" + "="*60)
     print("DATA PREPARATION COMPLETE")
     print("="*60)
-    print(f"Training samples: {metadata['train_samples']:,}")
-    print(f"Validation samples: {metadata['val_samples']:,}")
-    print(f"Test samples: {metadata['test_samples']:,}")
-    print(f"Features: {metadata['n_features']}")
-    print("\n Ready for model training!")
+    print(f"\n Summary:")
+    print(f"  Total samples: {len(X):,}")
+    print(f"  Train: {len(X_train_processed):,} ({y_train_processed.mean()*100:.2f}% fraud)")
+    print(f"  Validation: {len(X_val):,} ({y_val.mean()*100:.2f}% fraud)")
+    print(f"  Test: {len(X_test):,} ({y_test.mean()*100:.2f}% fraud)")
+    print(f"  Sampling method: {sampling_method}")
     
     return metadata
 
-
-def train_logistic_regression(X_train, y_train, X_val, y_val, random_state=42):
-    """
-    Train Logistic Regression baseline model
-    
-    Args:
-        X_train, y_train: Training data (balanced)
-        X_val, y_val: Validation data (unbalanced)
-        random_state: Random seed
-    
-    Returns:
-        Trained model and evaluation metrics
-    """
-    print("\n" + "="*60)
-    print("TRAINING LOGISTIC REGRESSION BASELINE")
-    print("="*60)
-    
-    # Train model
-    print("\nTraining Logistic Regression...")
-    lr_model = LogisticRegression(
-        random_state=random_state,
-        max_iter=1000,  # Increase for convergence
-        solver='lbfgs'
-    )
-    
-    lr_model.fit(X_train, y_train)
-    print("✓ Model trained")
-    
-    # Predict on validation set
-    y_val_pred = lr_model.predict(X_val)
-    y_val_proba = lr_model.predict_proba(X_val)[:, 1]
-    
-    # Calculate metrics
-    metrics = {
-        'model': 'Logistic Regression',
-        'accuracy': accuracy_score(y_val, y_val_pred),
-        'precision': precision_score(y_val, y_val_pred),
-        'recall': recall_score(y_val, y_val_pred),
-        'f1_score': f1_score(y_val, y_val_pred),
-        'roc_auc': roc_auc_score(y_val, y_val_proba)
-    }
-    
-    # Print metrics
-    print("\n=== VALIDATION SET PERFORMANCE ===")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f}")
-    print(f"F1-Score:  {metrics['f1_score']:.4f}")
-    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
-    
-    # Confusion Matrix
-    cm = confusion_matrix(y_val, y_val_pred)
-    print("\nConfusion Matrix:")
-    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
-    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
-    
-    # Classification Report
-    print("\nClassification Report:")
-    print(classification_report(y_val, y_val_pred, target_names=['Legitimate', 'Fraud']))
-    
-    return lr_model, metrics, y_val_pred, y_val_proba
-
-
-def train_random_forest(X_train, y_train, X_val, y_val, random_state=42):
-    """
-    Train Random Forest baseline model
-    
-    Args:
-        X_train, y_train: Training data (balanced)
-        X_val, y_val: Validation data (unbalanced)
-        random_state: Random seed
-    
-    Returns:
-        Trained model, metrics, and feature importances
-    """
-    print("\n" + "="*60)
-    print("TRAINING RANDOM FOREST BASELINE")
-    print("="*60)
-    
-    # Train model
-    print("\nTraining Random Forest...")
-    rf_model = RandomForestClassifier(
-        n_estimators=100,  # Default
-        random_state=random_state,
-        n_jobs=-1  # Use all CPU cores
-    )
-    
-    rf_model.fit(X_train, y_train)
-    print("✓ Model trained")
-    
-    # Predict on validation set
-    y_val_pred = rf_model.predict(X_val)
-    y_val_proba = rf_model.predict_proba(X_val)[:, 1]
-    
-    # Calculate metrics
-    metrics = {
-        'model': 'Random Forest',
-        'accuracy': accuracy_score(y_val, y_val_pred),
-        'precision': precision_score(y_val, y_val_pred),
-        'recall': recall_score(y_val, y_val_pred),
-        'f1_score': f1_score(y_val, y_val_pred),
-        'roc_auc': roc_auc_score(y_val, y_val_proba)
-    }
-    
-    # Print metrics
-    print("\n=== VALIDATION SET PERFORMANCE ===")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f}")
-    print(f"F1-Score:  {metrics['f1_score']:.4f}")
-    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
-    
-    # Confusion Matrix
-    cm = confusion_matrix(y_val, y_val_pred)
-    print("\nConfusion Matrix:")
-    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
-    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
-    
-    # Classification Report
-    print("\nClassification Report:")
-    print(classification_report(y_val, y_val_pred, target_names=['Legitimate', 'Fraud']))
-    
-    # Feature Importances
-    feature_importance = pd.DataFrame({
-        'feature': X_train.columns,
-        'importance': rf_model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    
-    print("\n=== TOP 10 MOST IMPORTANT FEATURES ===")
-    print(feature_importance.head(10).to_string(index=False))
-    
-    return rf_model, metrics, y_val_pred, y_val_proba, feature_importance
-
-
-def compare_baseline_models(lr_metrics, rf_metrics):
-    """Compare performance of baseline models"""
-    print("\n" + "="*60)
-    print("BASELINE MODEL COMPARISON")
-    print("="*60)
-    
-    # Create comparison DataFrame
-    comparison = pd.DataFrame([lr_metrics, rf_metrics])
-    comparison = comparison[['model', 'accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']]
-    
-    print("\n")
-    print(comparison.to_string(index=False))
-    
-    # Identify best model
-    best_f1_idx = comparison['f1_score'].idxmax()
-    best_model = comparison.loc[best_f1_idx, 'model']
-    best_f1 = comparison.loc[best_f1_idx, 'f1_score']
-    
-    print(f"\n Best Baseline Model: {best_model}")
-    print(f"   F1-Score: {best_f1:.4f}")
-    
-    return comparison
-
-
-def plot_confusion_matrices(y_val, y_lr_pred, y_rf_pred, save_path='../data/processed/'):
-    """Plot confusion matrices for both baseline models"""
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    
-    # Logistic Regression
-    cm_lr = confusion_matrix(y_val, y_lr_pred)
-    sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', ax=axes[0],
-                xticklabels=['Legitimate', 'Fraud'],
-                yticklabels=['Legitimate', 'Fraud'])
-    axes[0].set_title('Logistic Regression\nConfusion Matrix', fontweight='bold')
-    axes[0].set_ylabel('True Label')
-    axes[0].set_xlabel('Predicted Label')
-    
-    # Random Forest
-    cm_rf = confusion_matrix(y_val, y_rf_pred)
-    sns.heatmap(cm_rf, annot=True, fmt='d', cmap='Greens', ax=axes[1],
-                xticklabels=['Legitimate', 'Fraud'],
-                yticklabels=['Legitimate', 'Fraud'])
-    axes[1].set_title('Random Forest\nConfusion Matrix', fontweight='bold')
-    axes[1].set_ylabel('True Label')
-    axes[1].set_xlabel('Predicted Label')
-    
-    plt.tight_layout()
-    plt.savefig(f'{save_path}/baseline_confusion_matrices.png', dpi=300, bbox_inches='tight')
-    print(f"✓ Confusion matrices saved to {save_path}/baseline_confusion_matrices.png")
-    plt.show()
-
-
-def plot_roc_curves(y_val, y_lr_proba, y_rf_proba, lr_auc, rf_auc, save_path='../data/processed/'):
-    """Plot ROC curves for both baseline models"""
-    plt.figure(figsize=(10, 6))
-    
-    # Logistic Regression ROC
-    fpr_lr, tpr_lr, _ = roc_curve(y_val, y_lr_proba)
-    plt.plot(fpr_lr, tpr_lr, label=f'Logistic Regression (AUC = {lr_auc:.4f})', 
-             linewidth=2, color='blue')
-    
-    # Random Forest ROC
-    fpr_rf, tpr_rf, _ = roc_curve(y_val, y_rf_proba)
-    plt.plot(fpr_rf, tpr_rf, label=f'Random Forest (AUC = {rf_auc:.4f})', 
-             linewidth=2, color='green')
-    
-    # Diagonal (random baseline)
-    plt.plot([0, 1], [0, 1], 'k--', label='Random Baseline', linewidth=1)
-    
-    plt.xlabel('False Positive Rate', fontsize=12)
-    plt.ylabel('True Positive Rate', fontsize=12)
-    plt.title('ROC Curves - Baseline Models', fontsize=14, fontweight='bold')
-    plt.legend(loc='lower right', fontsize=10)
-    plt.grid(alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'{save_path}/baseline_roc_curves.png', dpi=300, bbox_inches='tight')
-    print(f"✓ ROC curves saved to {save_path}/baseline_roc_curves.png")
-    plt.show()
-
-
-def train_baseline_models():
-    """Complete baseline model training pipeline"""
-    print("="*60)
-    print("BASELINE MODEL TRAINING PIPELINE")
-    print("="*60)
-    
-    # Load prepared data
-    print("\nLoading prepared datasets...")
-    train_df = pd.read_csv('../data/processed/train_balanced.csv')
-    val_df = pd.read_csv('../data/processed/validation.csv')
-    
-    X_train = train_df.drop('FraudFound_P', axis=1)
-    y_train = train_df['FraudFound_P']
-    X_val = val_df.drop('FraudFound_P', axis=1)
-    y_val = val_df['FraudFound_P']
-    
-    print(f"✓ Training data: {X_train.shape}")
-    print(f"✓ Validation data: {X_val.shape}")
-    
-    # Train Logistic Regression
-    lr_model, lr_metrics, y_lr_pred, y_lr_proba = train_logistic_regression(
-        X_train, y_train, X_val, y_val
-    )
-    
-    # Train Random Forest
-    rf_model, rf_metrics, y_rf_pred, y_rf_proba, rf_feature_imp = train_random_forest(
-        X_train, y_train, X_val, y_val
-    )
-    
-    # Compare models
-    comparison = compare_baseline_models(lr_metrics, rf_metrics)
-    
-    # Save comparison table
-    comparison.to_csv('../data/processed/baseline_comparison.csv', index=False)
-    print("\n✓ Comparison table saved to ../data/processed/baseline_comparison.csv")
-    
-    # Plot visualizations
-    plot_confusion_matrices(y_val, y_lr_pred, y_rf_pred)
-    plot_roc_curves(y_val, y_lr_proba, y_rf_proba, lr_metrics['roc_auc'], rf_metrics['roc_auc'])
-    
-    # Save feature importances
-    rf_feature_imp.to_csv('../data/processed/rf_feature_importance.csv', index=False)
-    print("\n✓ Feature importances saved to ../data/processed/rf_feature_importance.csv")
-    
-    # Save models
-    joblib.dump(lr_model, '../models/logistic_regression_baseline.pkl')
-    joblib.dump(rf_model, '../models/random_forest_baseline.pkl')
-    print("\n✓ Models saved:")
-    print("  - ../models/logistic_regression_baseline.pkl")
-    print("  - ../models/random_forest_baseline.pkl")
-    
-    print("\n" + "="*60)
-    print("BASELINE TRAINING COMPLETE")
-    print("="*60)
-    
-    return {
-        'lr_model': lr_model,
-        'rf_model': rf_model,
-        'lr_metrics': lr_metrics,
-        'rf_metrics': rf_metrics,
-        'comparison': comparison,
-        'rf_feature_importance': rf_feature_imp
-    }
-
-
-def calculate_scale_pos_weight(y_train):
-    """Calculate class weight for imbalanced data"""
-    fraud_count = y_train.sum()
-    legit_count = len(y_train) - fraud_count
-    scale_pos_weight = legit_count / fraud_count
-    
-    print(f"\n=== CLASS WEIGHT CALCULATION ===")
-    print(f"Legitimate samples: {legit_count:,}")
-    print(f"Fraud samples: {fraud_count:,}")
-    print(f"Scale pos weight: {scale_pos_weight:.2f}")
-    print(f"Interpretation: Fraud is {scale_pos_weight:.1f}x less common than legitimate")
-    
-    return scale_pos_weight
-
-
-def train_xgboost(X_train, y_train, X_val, y_val, scale_pos_weight=None, random_state=42):
-    """
-    Train XGBoost model with proper fraud detection configuration
-    """
-    print("\n" + "="*60)
-    print("TRAINING XGBOOST CLASSIFIER")
-    print("="*60)
-    
-    # CRITICAL: Use original class imbalance ratio (before SMOTE)
-    # Not the SMOTE-balanced ratio!
-    if scale_pos_weight is None:
-        # Calculate from original data ratio: ~6% fraud = 15.7:1 ratio
-        scale_pos_weight = 15.7  # Hardcoded based on original 6% fraud rate
-        
-        print(f"\n=== CLASS WEIGHT CONFIGURATION ===")
-        print(f"Scale pos weight: {scale_pos_weight:.2f}")
-        print(f"Based on original fraud rate: ~6%")
-        print(f"Interpretation: Penalize missing fraud 15.7x more than false alarm")
-    
-    # Configure XGBoost for fraud detection
-    print("\nTraining XGBoost with fraud-optimized parameters...")
-    xgb_model = XGBClassifier(
-        scale_pos_weight=scale_pos_weight,  # CRITICAL for imbalanced data
-        max_depth=6,
-        learning_rate=0.1,
-        n_estimators=300,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric='aucpr',
-        random_state=random_state,
-        n_jobs=-1
-    )
-    
-    # Train with early stopping
-    xgb_model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=False
-    )
-    
-    print("✓ Model trained")
-    
-    # Predict on validation set
-    y_val_pred = xgb_model.predict(X_val)
-    y_val_proba = xgb_model.predict_proba(X_val)[:, 1]
-    
-    # Calculate metrics
-    metrics = {
-        'model': 'XGBoost',
-        'accuracy': accuracy_score(y_val, y_val_pred),
-        'precision': precision_score(y_val, y_val_pred),
-        'recall': recall_score(y_val, y_val_pred),
-        'f1_score': f1_score(y_val, y_val_pred),
-        'roc_auc': roc_auc_score(y_val, y_val_proba)
-    }
-    
-    # Print metrics
-    print("\n=== VALIDATION SET PERFORMANCE ===")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f} (fraud detection rate)")
-    print(f"F1-Score:  {metrics['f1_score']:.4f}  PRIMARY METRIC")
-    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
-    
-    # Confusion Matrix
-    cm = confusion_matrix(y_val, y_val_pred)
-    print("\nConfusion Matrix:")
-    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
-    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
-    
-    # Business interpretation
-    fraud_caught = cm[1,1]
-    fraud_total = cm[1,1] + cm[1,0]
-    fraud_caught_pct = (fraud_caught / fraud_total) * 100
-    
-    print(f"\n💡 Business Impact:")
-    print(f"   Caught {fraud_caught}/{fraud_total} frauds ({fraud_caught_pct:.1f}%)")
-    
-    # Classification Report
-    print("\nClassification Report:")
-    print(classification_report(y_val, y_val_pred, target_names=['Legitimate', 'Fraud']))
-    
-    # Feature Importances
-    feature_importance = pd.DataFrame({
-        'feature': X_train.columns,
-        'importance': xgb_model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    
-    print("\n=== TOP 10 MOST IMPORTANT FEATURES ===")
-    print(feature_importance.head(10).to_string(index=False))
-    
-    return xgb_model, metrics, y_val_pred, y_val_proba, feature_importance
 
 def clean_column_names(df):
     """Remove special characters from column names for LightGBM"""
@@ -700,229 +335,660 @@ def clean_column_names(df):
     return df
 
 
-def train_lightgbm(X_train, y_train, X_val, y_val, random_state=42):
+def plot_confusion_matrix(cm, model_name, save_path='../visualizations'):
+    """Plot confusion matrix heatmap"""
+    import os
+    os.makedirs(save_path, exist_ok=True)
+    
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=True,
+                xticklabels=['Legitimate', 'Fraud'],
+                yticklabels=['Legitimate', 'Fraud'])
+    plt.title(f'Confusion Matrix - {model_name}', fontsize=14, fontweight='bold')
+    plt.ylabel('Actual')
+    plt.xlabel('Predicted')
+    plt.tight_layout()
+    plt.savefig(f'{save_path}/{model_name.lower().replace(" ", "_")}_cm.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def train_baseline_models():
+    """Train baseline models (Logistic Regression and Random Forest)"""
+    print("="*60)
+    print("BASELINE MODEL TRAINING")
+    print("="*60)
+    
+    # Load data
+    print("\nLoading datasets...")
+    train_df = pd.read_csv('../data/processed/train_processed.csv')
+    val_df = pd.read_csv('../data/processed/validation.csv')
+    
+    X_train = train_df.drop('FraudFound_P', axis=1)
+    y_train = train_df['FraudFound_P']
+    X_val = val_df.drop('FraudFound_P', axis=1)
+    y_val = val_df['FraudFound_P']
+    
+    print(f"✓ Training: {X_train.shape}")
+    print(f"✓ Validation: {X_val.shape}")
+    print(f"✓ Training fraud rate: {y_train.mean()*100:.2f}%")
+    
+    # Calculate class weights for Logistic Regression
+    fraud_count = y_train.sum()
+    legit_count = len(y_train) - fraud_count
+    class_weight_ratio = legit_count / fraud_count
+    
+    print(f"\n=== CLASS WEIGHT CONFIGURATION ===")
+    print(f"Class weight ratio: {class_weight_ratio:.2f}")
+    print(f"Using class_weight='balanced' for both models")
+    
+    # 1. Logistic Regression with balanced class weights
+    print("\n" + "="*60)
+    print("TRAINING LOGISTIC REGRESSION")
+    print("="*60)
+    
+    lr_model = LogisticRegression(
+        max_iter=1000,
+        random_state=42,
+        class_weight='balanced',  # Handles imbalance automatically
+        solver='lbfgs'
+    )
+    
+    print("\nTraining Logistic Regression...")
+    lr_model.fit(X_train, y_train)
+    print("✓ Model trained")
+    
+    # Evaluate
+    y_lr_pred = lr_model.predict(X_val)
+    y_lr_proba = lr_model.predict_proba(X_val)[:, 1]
+    
+    print("\n=== VALIDATION SET PERFORMANCE ===")
+    print(f"Accuracy:  {accuracy_score(y_val, y_lr_pred):.4f}")
+    print(f"Precision: {precision_score(y_val, y_lr_pred):.4f}")
+    print(f"Recall:    {recall_score(y_val, y_lr_pred):.4f}")
+    print(f"F1-Score:  {f1_score(y_val, y_lr_pred):.4f}  PRIMARY METRIC")
+    print(f"ROC-AUC:   {roc_auc_score(y_val, y_lr_proba):.4f}")
+    
+    cm = confusion_matrix(y_val, y_lr_pred)
+    print(f"\nConfusion Matrix:")
+    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
+    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
+    
+    frauds_caught = cm[1,1]
+    total_frauds = cm[1,0] + cm[1,1]
+    print(f"\n Business Impact:")
+    print(f"   Caught {frauds_caught}/{total_frauds} frauds ({frauds_caught/total_frauds*100:.1f}%)")
+    
+    print(f"\nClassification Report:")
+    print(classification_report(y_val, y_lr_pred, target_names=['Legitimate', 'Fraud']))
+    
+    # Save model
+    joblib.dump(lr_model, '../models/logistic_regression_baseline.pkl')
+    print("✓ Model saved: ../models/logistic_regression_baseline.pkl")
+    
+    # Plot confusion matrix
+    plot_confusion_matrix(cm, 'Logistic Regression')
+    
+    # 2. Random Forest with balanced class weights
+    print("\n" + "="*60)
+    print("TRAINING RANDOM FOREST")
+    print("="*60)
+    
+    rf_model = RandomForestClassifier(
+        n_estimators=100,
+        max_depth=10,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        class_weight='balanced',  # Handles imbalance automatically
+        random_state=42,
+        n_jobs=-1
+    )
+    
+    print("\nTraining Random Forest...")
+    rf_model.fit(X_train, y_train)
+    print("✓ Model trained")
+    
+    # Evaluate
+    y_rf_pred = rf_model.predict(X_val)
+    y_rf_proba = rf_model.predict_proba(X_val)[:, 1]
+    
+    print("\n=== VALIDATION SET PERFORMANCE ===")
+    print(f"Accuracy:  {accuracy_score(y_val, y_rf_pred):.4f}")
+    print(f"Precision: {precision_score(y_val, y_rf_pred):.4f}")
+    print(f"Recall:    {recall_score(y_val, y_rf_pred):.4f}")
+    print(f"F1-Score:  {f1_score(y_val, y_rf_pred):.4f}  PRIMARY METRIC")
+    print(f"ROC-AUC:   {roc_auc_score(y_val, y_rf_proba):.4f}")
+    
+    cm = confusion_matrix(y_val, y_rf_pred)
+    print(f"\nConfusion Matrix:")
+    print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
+    print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
+    
+    frauds_caught = cm[1,1]
+    total_frauds = cm[1,0] + cm[1,1]
+    print(f"\n Business Impact:")
+    print(f"   Caught {frauds_caught}/{total_frauds} frauds ({frauds_caught/total_frauds*100:.1f}%)")
+    
+    print(f"\nClassification Report:")
+    print(classification_report(y_val, y_rf_pred, target_names=['Legitimate', 'Fraud']))
+    
+    # Save model
+    joblib.dump(rf_model, '../models/random_forest_baseline.pkl')
+    print("✓ Model saved: ../models/random_forest_baseline.pkl")
+    
+    # Plot confusion matrix
+    plot_confusion_matrix(cm, 'Random Forest')
+    
+    print("\n" + "="*60)
+    print("BASELINE TRAINING COMPLETE")
+    print("="*60)
+    
+    return {
+        'lr_model': lr_model,
+        'rf_model': rf_model,
+        'lr_metrics': {
+            'accuracy': accuracy_score(y_val, y_lr_pred),
+            'precision': precision_score(y_val, y_lr_pred),
+            'recall': recall_score(y_val, y_lr_pred),
+            'f1_score': f1_score(y_val, y_lr_pred),
+            'roc_auc': roc_auc_score(y_val, y_lr_proba)
+        },
+        'rf_metrics': {
+            'accuracy': accuracy_score(y_val, y_rf_pred),
+            'precision': precision_score(y_val, y_rf_pred),
+            'recall': recall_score(y_val, y_rf_pred),
+            'f1_score': f1_score(y_val, y_rf_pred),
+            'roc_auc': roc_auc_score(y_val, y_rf_proba)
+        }
+    }
+
+"""
+changes:
+- optimize_threshold() now saves THREE thresholds to the JSON
+- predict_with_threshold() loads 'deployed_threshold' (the recall-optimised one)
+- The model .pkl is untouched — we are only changing the decision boundary
+"""
+
+def optimize_threshold(y_true, y_proba, model_name='xgboost', save_dir='../models'):
     """
-    Train LightGBM model with is_unbalance parameter
-    
+    Finds THREE thresholds and saves them all to disk:
+      1. f1_threshold     — mathematically best F1 (what your friend gave you)
+      2. recall_threshold — catches the most fraud (best for business ROI)
+      3. deployed_threshold — what production actually uses (set to recall_threshold)
+
     Args:
-        X_train, y_train: Training data
-        X_val, y_val: Validation data
-        random_state: Random seed
-    
+        y_true    : Ground-truth labels (validation set only — never training or test)
+        y_proba   : model.predict_proba(X_val)[:, 1]
+        model_name: used to name the saved JSON file
+        save_dir  : where to write the JSON
+
     Returns:
-        Trained model, metrics, predictions, and feature importances
+        deployed_threshold (float)  — the one production will use
+        best_preds         (array)  — predictions at deployed_threshold
+    """
+    from sklearn.metrics import precision_recall_curve, f1_score as sk_f1, recall_score
+    import numpy as np
+    import json, os
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    precisions, recalls, thresholds = precision_recall_curve(y_true, y_proba)
+
+    # ── 1. F1-OPTIMISED THRESHOLD ─────────────────────────────
+    f1_scores = np.divide(
+        2 * (precisions[:-1] * recalls[:-1]),
+        (precisions[:-1] + recalls[:-1]),
+        out=np.zeros(len(thresholds)),
+        where=(precisions[:-1] + recalls[:-1]) != 0
+    )
+    f1_idx        = int(np.argmax(f1_scores))
+    f1_threshold  = float(thresholds[f1_idx])
+    f1_best       = float(f1_scores[f1_idx])
+
+    # ── 2. RECALL-OPTIMISED THRESHOLD ─────────────────────────
+    # We want recall >= 0.75 (catch at least 75% of frauds)
+    # Among all thresholds that meet that bar, pick the one
+    # with the highest precision (fewest wasted investigations)
+    #
+    # Why 0.75? With $10,000 missed fraud vs $200 false alarm,
+    # catching 75%+ of frauds is the break-even business target.
+    # You can adjust this number — higher = catch more fraud,
+    # lower = fewer false alarms.
+    TARGET_RECALL = 0.75
+
+    # recalls[:-1] aligns with thresholds array
+    recall_vals = recalls[:-1]
+    meets_target = recall_vals >= TARGET_RECALL
+
+    if meets_target.any():
+        # Among thresholds that meet recall target, pick highest precision
+        candidate_precisions = np.where(meets_target, precisions[:-1], 0)
+        recall_idx           = int(np.argmax(candidate_precisions))
+    else:
+        # If no threshold hits 0.75 recall, just take the highest recall available
+        print(f"   ⚠️  No threshold achieves {TARGET_RECALL:.0%} recall — using best available")
+        recall_idx = int(np.argmax(recall_vals))
+
+    recall_threshold      = float(thresholds[recall_idx])
+    recall_at_threshold   = float(recall_vals[recall_idx])
+    precision_at_threshold = float(precisions[recall_idx])
+    f1_at_recall_thresh   = float(f1_scores[recall_idx])
+
+    # ── 3. DEFAULT 0.50 for comparison ────────────────────────
+    default_preds = (y_proba >= 0.50).astype(int)
+    default_f1    = sk_f1(y_true, default_preds)
+
+    # ── PRINT COMPARISON ──────────────────────────────────────
+    print(f"\n Threshold Analysis ({model_name}):")
+    print(f"   {'':30s}  {'Threshold':>10}  {'F1':>7}  {'Recall':>7}  {'Precision':>10}")
+    print(f"   {'─'*65}")
+    print(f"   {'Default (0.50)':30s}  {'0.5000':>10}  {default_f1:>7.4f}  {recall_score(y_true, default_preds):>7.4f}  {'-':>10}")
+    print(f"   {'F1-Optimised':30s}  {f1_threshold:>10.4f}  {f1_best:>7.4f}  {recalls[f1_idx]:>7.4f}  {precisions[f1_idx]:>10.4f}")
+    print(f"   {'Recall-Optimised (deployed)':30s}  {recall_threshold:>10.4f}  {f1_at_recall_thresh:>7.4f}  {recall_at_threshold:>7.4f}  {precision_at_threshold:>10.4f}")
+
+    # ── BUSINESS COST COMPARISON ──────────────────────────────
+    # Compare default 0.50 vs deployed recall threshold
+    preds_deployed  = (y_proba >= recall_threshold).astype(int)
+    
+    from sklearn.metrics import confusion_matrix
+    cm_default  = confusion_matrix(y_true, default_preds)
+    cm_deployed = confusion_matrix(y_true, preds_deployed)
+
+    missed_default  = int(cm_default[1, 0])
+    falarms_default = int(cm_default[0, 1])
+    missed_deployed  = int(cm_deployed[1, 0])
+    falarms_deployed = int(cm_deployed[0, 1])
+
+    cost_per_missed_fraud  = 10_000
+    cost_per_false_alarm   = 200
+
+    cost_default  = missed_default  * cost_per_missed_fraud + falarms_default  * cost_per_false_alarm
+    cost_deployed = missed_deployed * cost_per_missed_fraud + falarms_deployed * cost_per_false_alarm
+
+    print(f"\n Business Cost Comparison (validation set):")
+    print(f"   {'':30s}  {'Missed Frauds':>14}  {'False Alarms':>13}  {'Total Cost':>11}")
+    print(f"   {'─'*75}")
+    print(f"   {'Default (0.50)':30s}  {missed_default:>14}  {falarms_default:>13}  ${cost_default:>10,.0f}")
+    print(f"   {'Deployed (recall-opt)':30s}  {missed_deployed:>14}  {falarms_deployed:>13}  ${cost_deployed:>10,.0f}")
+    print(f"\n    Deployed threshold saves: ${cost_default - cost_deployed:,.0f} vs default 0.50")
+
+    # ── SAVE ALL THREE TO DISK ────────────────────────────────
+    threshold_data = {
+        'model_name'          : model_name,
+
+        # The three thresholds
+        'f1_threshold'        : f1_threshold,
+        'recall_threshold'    : recall_threshold,
+        'deployed_threshold'  : recall_threshold,   # ← production uses this one
+
+        # Metrics at each
+        'f1_at_f1_threshold'         : f1_best,
+        'recall_at_f1_threshold'     : float(recalls[f1_idx]),
+        'f1_at_recall_threshold'     : f1_at_recall_thresh,
+        'recall_at_recall_threshold' : recall_at_threshold,
+        'precision_at_recall_threshold': precision_at_threshold,
+
+        # Business cost at deployed threshold
+        'missed_frauds_deployed'  : missed_deployed,
+        'false_alarms_deployed'   : falarms_deployed,
+        'business_cost_deployed'  : cost_deployed,
+        'business_cost_default'   : cost_default,
+        'cost_saving_vs_default'  : cost_default - cost_deployed,
+
+        'rationale': (
+            f"recall_threshold deployed — catching {recall_at_threshold:.0%} of frauds. "
+            f"Missed fraud costs ${cost_per_missed_fraud:,} vs ${cost_per_false_alarm} false alarm. "
+            f"Recall-optimised threshold saves ${cost_default - cost_deployed:,} vs default 0.50."
+        )
+    }
+
+    save_path = f"{save_dir}/{model_name}_threshold.json"
+    with open(save_path, 'w') as f:
+        json.dump(threshold_data, f, indent=2)
+    print(f"\n   ✓ All thresholds saved → {save_path}")
+
+    # Return the DEPLOYED threshold and its predictions
+    return recall_threshold, preds_deployed
+
+
+"""
+What changed and why:
+- optimize_threshold() now returns the DEPLOYED (recall) threshold + predictions
+- But the comparison table should show F1-optimised metrics (fair model comparison)
+- So we now make TWO sets of predictions:
+    y_pred_deployed → used for business impact / confusion matrix display
+    y_pred_f1       → used for the comparison table metrics
+- The returned metrics dict uses y_pred_f1 so the table is fair
+- The returned y_pred is y_pred_deployed so downstream plots show reality
+"""
+
+def train_xgboost(X_train, y_train, X_val, y_val):
+    """
+    Train XGBoost with scale_pos_weight for class imbalance.
+    Finds both F1-optimised and recall-optimised (deployed) thresholds.
+    Reports F1-optimised metrics in comparison table.
+    Production uses deployed threshold via predict_with_threshold().
+    """
+    print("\n" + "=" * 60)
+    print("TRAINING XGBOOST CLASSIFIER")
+    print("=" * 60)
+
+    fraud_count      = y_train.sum()
+    legit_count      = len(y_train) - fraud_count
+    scale_pos_weight = legit_count / fraud_count
+
+    print(f"\n=== CLASS WEIGHT CONFIGURATION ===")
+    print(f"Scale pos weight: {scale_pos_weight:.2f}")
+    print(f"Based on fraud rate: {y_train.mean() * 100:.2f}%")
+    print(f"Interpretation: Penalise missing a fraud {scale_pos_weight:.1f}x more than a false alarm")
+
+    model = XGBClassifier(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        scale_pos_weight=scale_pos_weight,
+        eval_metric='aucpr',
+        random_state=42,
+        verbosity=0
+    )
+
+    print(f"\nTraining XGBoost...")
+    model.fit(X_train, y_train)
+    print("✓ Model trained")
+
+    # ── Step 1: raw probabilities ──────────────────────────────
+    y_proba = model.predict_proba(X_val)[:, 1]
+
+    # ── Step 2: find both thresholds, save to disk ─────────────
+    # optimize_threshold() returns the DEPLOYED (recall) threshold
+    # but also saves f1_threshold inside the JSON
+    deployed_thresh, y_pred_deployed = optimize_threshold(
+        y_val, y_proba,
+        model_name='xgboost',
+        save_dir='../models'
+    )
+
+    # ── Step 3: load f1_threshold from saved JSON for fair table ──
+    import json
+    with open('../models/xgboost_threshold.json', 'r') as f:
+        threshold_data = json.load(f)
+
+    f1_thresh   = threshold_data['f1_threshold']
+    y_pred_f1   = (y_proba >= f1_thresh).astype(int)
+
+    # ── Step 4: compute metrics using F1-optimised predictions ──
+    # This keeps the comparison table fair across all 4 models
+    accuracy  = accuracy_score(y_val, y_pred_f1)
+    precision = precision_score(y_val, y_pred_f1)
+    recall    = recall_score(y_val, y_pred_f1)
+    f1        = f1_score(y_val, y_pred_f1)
+    roc_auc   = roc_auc_score(y_val, y_proba)  # threshold-independent, always uses y_proba
+
+    # ── Step 5: print performance at F1-optimised threshold ─────
+    print("\n=== VALIDATION SET PERFORMANCE (F1-optimised threshold) ===")
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}  (fraud detection rate)")
+    print(f"F1-Score:  {f1:.4f}   PRIMARY METRIC")
+    print(f"ROC-AUC:   {roc_auc:.4f}  (threshold-independent)")
+
+    cm_f1 = confusion_matrix(y_val, y_pred_f1)
+    print(f"\nConfusion Matrix (F1 threshold = {f1_thresh:.4f}):")
+    print(f"  TN: {cm_f1[0, 0]:,}  |  FP: {cm_f1[0, 1]:,}")
+    print(f"  FN: {cm_f1[1, 0]:,}  |  TP: {cm_f1[1, 1]:,}")
+
+    # ── Step 6: also print deployed (business) performance ──────
+    cm_deployed = confusion_matrix(y_val, y_pred_deployed)
+    frauds_caught_deployed = cm_deployed[1, 1]
+    total_frauds           = cm_deployed[1, 0] + cm_deployed[1, 1]
+
+    print(f"\n=== DEPLOYED PERFORMANCE (recall threshold = {deployed_thresh:.4f}) ===")
+    print(f"  TN: {cm_deployed[0, 0]:,}  |  FP: {cm_deployed[0, 1]:,}")
+    print(f"  FN: {cm_deployed[1, 0]:,}  |  TP: {cm_deployed[1, 1]:,}")
+    print(f"\n Business Impact (deployed threshold):")
+    print(f"   Caught {frauds_caught_deployed}/{total_frauds} frauds ({frauds_caught_deployed / total_frauds * 100:.1f}%)")
+    print(f"   Business cost: ${threshold_data['business_cost_deployed']:,.0f}  (vs ${threshold_data['business_cost_default']:,.0f} at default 0.50)")
+    print(f"   Saving: ${threshold_data['cost_saving_vs_default']:,.0f}")
+
+    print(f"\nClassification Report (F1 threshold = {f1_thresh:.4f}):")
+    print(classification_report(y_val, y_pred_f1, target_names=['Legitimate', 'Fraud']))
+
+    # ── Step 7: feature importance ───────────────────────────────
+    feature_importance = pd.DataFrame({
+        'feature'   : X_train.columns,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+
+    print(f"\n=== TOP 10 MOST IMPORTANT FEATURES ===")
+    print(feature_importance.head(10).to_string(index=False))
+
+    # confusion matrix plot uses F1 threshold (what the table shows)
+    plot_confusion_matrix(cm_f1, 'XGBoost')
+
+    # ── Step 8: metrics dict uses F1-optimised for fair comparison ─
+    metrics = {
+        'model'    : 'XGBoost',
+        'accuracy' : accuracy,
+        'precision': precision,
+        'recall'   : recall,
+        'f1_score' : f1,
+        'roc_auc'  : roc_auc,
+        'threshold': f1_thresh      # shows f1 threshold in comparison table
+    }
+
+    # y_pred returned is the DEPLOYED one — downstream plots show real production behaviour
+    return model, metrics, y_pred_deployed, y_proba, feature_importance
+
+
+def train_lightgbm(X_train, y_train, X_val, y_val):
+    """
+    Train LightGBM with proper class weight handling
     """
     print("\n" + "="*60)
     print("TRAINING LIGHTGBM CLASSIFIER")
     print("="*60)
     
-    # Configure LightGBM for fraud detection
-    print("\nTraining LightGBM with is_unbalance=True...")
-    lgbm_model = LGBMClassifier(
-        is_unbalance=True,                 # Handle class imbalance (LightGBM's approach)
+    # Calculate scale_pos_weight
+    fraud_count = y_train.sum()
+    legit_count = len(y_train) - fraud_count
+    scale_pos_weight = legit_count / fraud_count
+    
+    print(f"\n=== CLASS WEIGHT CONFIGURATION ===")
+    print(f"Scale pos weight: {scale_pos_weight:.2f}")
+    print(f"Based on fraud rate: {y_train.mean()*100:.2f}%")
+    
+    # LightGBM with proper parameters
+    model = LGBMClassifier(
+        n_estimators=100,     #  Reduce trees (was 300)
         max_depth=6,
-        learning_rate=0.1,
-        n_estimators=300,
+        learning_rate=0.1,    #  Standard (was 0.05)
         subsample=0.8,
         colsample_bytree=0.8,
-        random_state=random_state,
-        n_jobs=-1,
-        verbose=-1                         # Suppress training logs
+        scale_pos_weight=scale_pos_weight,
+        is_unbalance=False,
+        metric='auc',
+        random_state=42,
+        verbosity=-1
     )
     
-    # Train model
-    lgbm_model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=False)]
-    )
-    
+    print(f"\nTraining LightGBM with scale_pos_weight={scale_pos_weight:.2f}...")
+    model.fit(X_train, y_train)  # REMOVED callbacks parameter
     print("✓ Model trained")
     
-    # Predict on validation set
-    y_val_pred = lgbm_model.predict(X_val)
-    y_val_proba = lgbm_model.predict_proba(X_val)[:, 1]
+    # Rest stays the same...
+    y_pred = model.predict(X_val)
+    y_proba = model.predict_proba(X_val)[:, 1]
     
-    # Calculate metrics
-    metrics = {
-        'model': 'LightGBM',
-        'accuracy': accuracy_score(y_val, y_val_pred),
-        'precision': precision_score(y_val, y_val_pred),
-        'recall': recall_score(y_val, y_val_pred),
-        'f1_score': f1_score(y_val, y_val_pred),
-        'roc_auc': roc_auc_score(y_val, y_val_proba)
-    }
+    # Metrics
+    accuracy = accuracy_score(y_val, y_pred)
+    precision = precision_score(y_val, y_pred)
+    recall = recall_score(y_val, y_pred)
+    f1 = f1_score(y_val, y_pred)
+    roc_auc = roc_auc_score(y_val, y_proba)
     
-    # Print metrics
     print("\n=== VALIDATION SET PERFORMANCE ===")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f}")
-    print(f"F1-Score:  {metrics['f1_score']:.4f} ⭐ PRIMARY METRIC")
-    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}")
+    print(f"F1-Score:  {f1:.4f}  PRIMARY METRIC")
+    print(f"ROC-AUC:   {roc_auc:.4f}")
     
-    # Confusion Matrix
-    cm = confusion_matrix(y_val, y_val_pred)
-    print("\nConfusion Matrix:")
+    cm = confusion_matrix(y_val, y_pred)
+    print(f"\nConfusion Matrix:")
     print(f"  TN: {cm[0,0]:,}  |  FP: {cm[0,1]:,}")
     print(f"  FN: {cm[1,0]:,}  |  TP: {cm[1,1]:,}")
     
-    # Business interpretation
-    fraud_caught = cm[1,1]
-    fraud_total = cm[1,1] + cm[1,0]
-    fraud_caught_pct = (fraud_caught / fraud_total) * 100
+    frauds_caught = cm[1,1]
+    total_frauds = cm[1,0] + cm[1,1]
+    frauds_missed = cm[1,0]
+    false_alarms = cm[0,1]
     
-    print(f"\n💡 Business Impact:")
-    print(f"   Caught {fraud_caught}/{fraud_total} frauds ({fraud_caught_pct:.1f}%)")
-    print(f"   Missed {cm[1,0]} frauds (cost: ${cm[1,0] * 10000:,})")
-    print(f"   False alarms: {cm[0,1]} (cost: ${cm[0,1] * 200:,})")
+    print(f"\n Business Impact:")
+    print(f"   Caught {frauds_caught}/{total_frauds} frauds ({frauds_caught/total_frauds*100:.1f}%)")
+    print(f"   Missed {frauds_missed} frauds (cost: ${frauds_missed*10000:,})")
+    print(f"   False alarms: {false_alarms} (cost: ${false_alarms*200:,})")
     
-    # Classification Report
-    print("\nClassification Report:")
-    print(classification_report(y_val, y_val_pred, target_names=['Legitimate', 'Fraud']))
+    print(f"\nClassification Report:")
+    print(classification_report(y_val, y_pred, target_names=['Legitimate', 'Fraud']))
     
-    # Feature Importances
+    # Feature importance
     feature_importance = pd.DataFrame({
         'feature': X_train.columns,
-        'importance': lgbm_model.feature_importances_
+        'importance': model.feature_importances_
     }).sort_values('importance', ascending=False)
     
-    print("\n=== TOP 10 MOST IMPORTANT FEATURES ===")
+    print(f"\n=== TOP 10 MOST IMPORTANT FEATURES ===")
     print(feature_importance.head(10).to_string(index=False))
     
-    return lgbm_model, metrics, y_val_pred, y_val_proba, feature_importance
-
-
-def cross_validate_models(X_train, y_train, models_dict, cv_folds=5):
-    """
-    Perform stratified cross-validation on multiple models
+    # Plot confusion matrix
+    plot_confusion_matrix(cm, 'LightGBM')
     
-    Args:
-        X_train, y_train: Training data
-        models_dict: Dictionary of {name: model}
-        cv_folds: Number of CV folds
+    metrics = {
+        'model': 'LightGBM',
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1_score': f1,
+        'roc_auc': roc_auc
+    }
     
-    Returns:
-        DataFrame with CV results
-    """
+    return model, metrics, y_pred, y_proba, feature_importance
+
+def cross_validate_models(X_train, y_train, models, cv_folds=5):
+    """Cross-validate models using stratified K-fold"""
     print("\n" + "="*60)
-    print("CROSS-VALIDATION (5-FOLD STRATIFIED)")
+    print(f"CROSS-VALIDATION ({cv_folds}-FOLD STRATIFIED)")
     print("="*60)
     
-    cv_results = []
-    
-    # Set up stratified K-fold
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     
-    for model_name, model in models_dict.items():
-        print(f"\nRunning CV for {model_name}...")
+    results = []
+    
+    for name, model in models.items():
+        print(f"\nRunning CV for {name}...")
         
-        # Run cross-validation for multiple metrics
-        f1_scores = cross_val_score(model, X_train, y_train, cv=skf, 
-                                     scoring='f1', n_jobs=-1)
-        recall_scores = cross_val_score(model, X_train, y_train, cv=skf, 
-                                        scoring='recall', n_jobs=-1)
-        precision_scores = cross_val_score(model, X_train, y_train, cv=skf, 
-                                          scoring='precision', n_jobs=-1)
+        # Cross-validate
+        f1_scores = cross_val_score(model, X_train, y_train, cv=skf, scoring='f1', n_jobs=-1)
+        recall_scores = cross_val_score(model, X_train, y_train, cv=skf, scoring='recall', n_jobs=-1)
+        precision_scores = cross_val_score(model, X_train, y_train, cv=skf, scoring='precision', n_jobs=-1)
         
-        result = {
-            'model': model_name,
+        print(f"  F1-Score:  {f1_scores.mean():.4f} (±{f1_scores.std():.4f})")
+        print(f"  Recall:    {recall_scores.mean():.4f} (±{recall_scores.std():.4f})")
+        print(f"  Precision: {precision_scores.mean():.4f} (±{precision_scores.std():.4f})")
+        
+        results.append({
+            'model': name,
             'f1_mean': f1_scores.mean(),
             'f1_std': f1_scores.std(),
             'recall_mean': recall_scores.mean(),
             'recall_std': recall_scores.std(),
             'precision_mean': precision_scores.mean(),
             'precision_std': precision_scores.std()
-        }
-        
-        cv_results.append(result)
-        
-        print(f"  F1-Score:  {result['f1_mean']:.4f} (±{result['f1_std']:.4f})")
-        print(f"  Recall:    {result['recall_mean']:.4f} (±{result['recall_std']:.4f})")
-        print(f"  Precision: {result['precision_mean']:.4f} (±{result['precision_std']:.4f})")
+        })
     
-    cv_df = pd.DataFrame(cv_results)
+    results_df = pd.DataFrame(results)
     
     print("\n=== CROSS-VALIDATION SUMMARY ===")
-    print(cv_df.to_string(index=False))
+    print(results_df.to_string(index=False))
     
-    return cv_df
+    return results_df
 
 
 def compare_all_models(lr_metrics, rf_metrics, xgb_metrics, lgbm_metrics):
-    """Compare all 4 models"""
+    """Compare all 4 models side by side"""
     print("\n" + "="*60)
     print("COMPLETE MODEL COMPARISON (ALL 4 MODELS)")
     print("="*60)
     
     comparison = pd.DataFrame([lr_metrics, rf_metrics, xgb_metrics, lgbm_metrics])
-    comparison = comparison[['model', 'accuracy', 'precision', 'recall', 'f1_score', 'roc_auc']]
     
     print("\n")
     print(comparison.to_string(index=False))
     
-    # Identify best models
+    # Find best models
     best_f1_idx = comparison['f1_score'].idxmax()
     best_recall_idx = comparison['recall'].idxmax()
     best_auc_idx = comparison['roc_auc'].idxmax()
     
-    print(f"\n🏆 WINNERS:")
+    print(f"\n WINNERS:")
     print(f"   Best F1-Score: {comparison.loc[best_f1_idx, 'model']} ({comparison.loc[best_f1_idx, 'f1_score']:.4f})")
     print(f"   Best Recall: {comparison.loc[best_recall_idx, 'model']} ({comparison.loc[best_recall_idx, 'recall']:.4f})")
     print(f"   Best ROC-AUC: {comparison.loc[best_auc_idx, 'model']} ({comparison.loc[best_auc_idx, 'roc_auc']:.4f})")
     
-    # Calculate improvement over baseline
-    baseline_f1 = comparison[comparison['model'].str.contains('Logistic')]['f1_score'].values[0]
-    best_f1 = comparison.loc[best_f1_idx, 'f1_score']
-    improvement = ((best_f1 - baseline_f1) / baseline_f1) * 100
+    # Calculate improvement
+    baseline_best_f1 = max(lr_metrics['f1_score'], rf_metrics['f1_score'])
+    advanced_best_f1 = max(xgb_metrics['f1_score'], lgbm_metrics['f1_score'])
+    improvement = ((advanced_best_f1 - baseline_best_f1) / baseline_best_f1) * 100
     
-    print(f"\n📈 IMPROVEMENT OVER BASELINE:")
+    print(f"\n IMPROVEMENT OVER BASELINE:")
     print(f"   F1-Score improved by {improvement:.1f}%")
-    print(f"   {baseline_f1:.4f} → {best_f1:.4f}")
+    print(f"   {baseline_best_f1:.4f} → {advanced_best_f1:.4f}")
     
     return comparison
 
 
 def plot_advanced_model_comparisons(y_val, y_lr_pred, y_rf_pred, y_xgb_pred, y_lgbm_pred,
-                                    y_lr_proba, y_rf_proba, y_xgb_proba, y_lgbm_proba,
-                                    lr_metrics, rf_metrics, xgb_metrics, lgbm_metrics,
-                                    save_path='../data/processed/'):
-    """Plot comprehensive model comparisons"""
+                                     y_lr_proba, y_rf_proba, y_xgb_proba, y_lgbm_proba,
+                                     lr_metrics, rf_metrics, xgb_metrics, lgbm_metrics,
+                                     save_path='../visualizations'):
+    """Create comprehensive comparison visualizations"""
+    import os
+    os.makedirs(save_path, exist_ok=True)
     
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    print("\n=== GENERATING VISUALIZATIONS ===")
     
-    # 1. Confusion Matrices (2x2 grid)
-    cms = [
-        confusion_matrix(y_val, y_lr_pred),
-        confusion_matrix(y_val, y_rf_pred),
-        confusion_matrix(y_val, y_xgb_pred),
-        confusion_matrix(y_val, y_lgbm_pred)
+    # 1. All confusion matrices in one plot
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    
+    models_cm = [
+        ('Logistic Regression', confusion_matrix(y_val, y_lr_pred)),
+        ('Random Forest', confusion_matrix(y_val, y_rf_pred)),
+        ('XGBoost', confusion_matrix(y_val, y_xgb_pred)),
+        ('LightGBM', confusion_matrix(y_val, y_lgbm_pred))
     ]
-    titles = ['Logistic Regression', 'Random Forest', 'XGBoost', 'LightGBM']
-    cmaps = ['Blues', 'Greens', 'Oranges', 'Purples']
     
-    for idx, (cm, title, cmap) in enumerate(zip(cms, titles, cmaps)):
+    for idx, (name, cm) in enumerate(models_cm):
         ax = axes[idx // 2, idx % 2]
-        sns.heatmap(cm, annot=True, fmt='d', cmap=cmap, ax=ax,
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax, cbar=False,
                     xticklabels=['Legitimate', 'Fraud'],
                     yticklabels=['Legitimate', 'Fraud'])
-        ax.set_title(f'{title}\nF1: {[lr_metrics, rf_metrics, xgb_metrics, lgbm_metrics][idx]["f1_score"]:.4f}', 
-                    fontweight='bold')
-        ax.set_ylabel('True Label')
-        ax.set_xlabel('Predicted Label')
+        ax.set_title(name, fontsize=12, fontweight='bold')
+        ax.set_ylabel('Actual')
+        ax.set_xlabel('Predicted')
     
     plt.tight_layout()
     plt.savefig(f'{save_path}/all_confusion_matrices.png', dpi=300, bbox_inches='tight')
     print(f"✓ Confusion matrices saved")
     plt.close()
     
-    # 2. ROC Curves
-    plt.figure(figsize=(10, 6))
+    # 2. ROC curves comparison
+    plt.figure(figsize=(10, 8))
     
     models_data = [
         ('Logistic Regression', y_lr_proba, lr_metrics['roc_auc'], 'blue'),
         ('Random Forest', y_rf_proba, rf_metrics['roc_auc'], 'green'),
-        ('XGBoost', y_xgb_proba, xgb_metrics['roc_auc'], 'orange'),
+        ('XGBoost', y_xgb_proba, xgb_metrics['roc_auc'], 'red'),
         ('LightGBM', y_lgbm_proba, lgbm_metrics['roc_auc'], 'purple')
     ]
     
@@ -1002,7 +1068,7 @@ def train_advanced_models():
     
     # Load data
     print("\nLoading datasets...")
-    train_df = pd.read_csv('../data/processed/train_balanced.csv')
+    train_df = pd.read_csv('../data/processed/train_processed.csv')
     val_df = pd.read_csv('../data/processed/validation.csv')
     
     X_train = train_df.drop('FraudFound_P', axis=1)
@@ -1012,13 +1078,14 @@ def train_advanced_models():
     
     print(f"✓ Training: {X_train.shape}")
     print(f"✓ Validation: {X_val.shape}")
+    print(f"✓ Training fraud rate: {y_train.mean()*100:.2f}%")
     
     # Load baseline results for comparison (BEFORE cleaning column names)
     print("\nLoading baseline models...")
     lr_model = joblib.load('../models/logistic_regression_baseline.pkl')
     rf_model = joblib.load('../models/random_forest_baseline.pkl')
     
-    # Get baseline metrics (with ORIGINAL column names)
+    # Get baseline metrics (with ORIGINAL column names - DON'T clean yet)
     y_lr_pred = lr_model.predict(X_val)
     y_lr_proba = lr_model.predict_proba(X_val)[:, 1]
     lr_metrics = {
@@ -1112,6 +1179,74 @@ def train_advanced_models():
         'lgbm_feature_imp': lgbm_feature_imp
     }
 
+
+def predict_with_threshold(model, X, model_name='xgboost', threshold_dir='../models'):
+    """
+    Load the saved DEPLOYED threshold and apply it to new data.
+
+    Always uses 'deployed_threshold' from the JSON — the recall-optimised
+    one chosen for business ROI, not the F1-mathematical one.
+
+    Args:
+        model         : trained XGBClassifier loaded with joblib
+        X             : feature DataFrame (same columns as training)
+        model_name    : must match what was passed to optimize_threshold()
+        threshold_dir : where the JSON was saved
+
+    Returns:
+        y_pred  (array of 0/1)   — final binary fraud predictions
+        y_proba (array of float) — raw probabilities (useful for risk ranking)
+    """
+
+
+    threshold_path = f"{threshold_dir}/{model_name}_threshold.json"
+
+    if not os.path.exists(threshold_path):
+        raise FileNotFoundError(
+            f"Threshold file not found at {threshold_path}.\n"
+            f"Run train_xgboost() first to generate and save thresholds."
+        )
+
+    with open(threshold_path, 'r') as f:
+        threshold_data = json.load(f)
+
+    # Always load 'deployed_threshold' — never re-derive from data
+    threshold = threshold_data['deployed_threshold']
+    rationale = threshold_data.get('rationale', '')
+
+    y_proba = model.predict_proba(X)[:, 1]
+    y_pred  = (y_proba >= threshold).astype(int)
+
+    print(f"✓ Predictions made using deployed threshold: {threshold:.4f}  ({model_name})")
+    print(f"  Rationale: {rationale}")
+    print(f"  Flagged as fraud: {y_pred.sum():,} / {len(y_pred):,} ({y_pred.mean()*100:.2f}%)")
+
+    return y_pred, y_proba
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THE SAVED JSON WILL LOOK LIKE 
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ../models/xgboost_threshold.json
+# {
+#   "model_name": "xgboost",
+#
+#   "f1_threshold": 0.5708,        ← mathematically best F1 (your friend's version)
+#   "recall_threshold": 0.28XX,    ← catches 75%+ of fraud (business-optimal)
+#   "deployed_threshold": 0.28XX,  ← what production uses (same as recall_threshold)
+#
+#   "recall_at_recall_threshold": 0.75XX,
+#   "precision_at_recall_threshold": 0.XXXX,
+#
+#   "missed_frauds_deployed": XX,
+#   "false_alarms_deployed": XXX,
+#   "business_cost_deployed": XXXXX,
+#   "cost_saving_vs_default": XXXXX,
+#
+#   "rationale": "recall_threshold deployed — catching 75% of frauds..."
+# }
+
 if __name__ == "__main__":
     import sys
     
@@ -1127,14 +1262,15 @@ if __name__ == "__main__":
         input_file = '../data/processed/insurance_claims_engineered.csv'
         output_dir = '../data/processed/'
         
+        # CORRECTED: Using sampling_method='none' instead of 'smote'
         metadata = prepare_training_data(
             input_path=input_file,
             output_dir=output_dir,
-            sampling_method='smote',
-            sampling_strategy=0.5,
+            sampling_method='none',  # CHANGED: No SMOTE, use class weights instead
+            sampling_strategy=0.5,   # Ignored when method='none'
             random_state=42
         )
         
-        print("\n💡 Next steps:")
+        print("\n Next steps:")
         print("   python model_training.py baseline   # Train LR and RF")
         print("   python model_training.py advanced   # Train XGBoost and LightGBM")
