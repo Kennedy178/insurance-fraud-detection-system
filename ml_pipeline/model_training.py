@@ -26,7 +26,7 @@ import xgboost as xgb
 from xgboost import XGBClassifier
 import lightgbm as lgb
 from lightgbm import LGBMClassifier
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import cross_val_score, StratifiedKFold, RandomizedSearchCV
 
 def load_engineered_data(filepath: str) -> Tuple[pd.DataFrame, pd.Series]:
     """
@@ -1060,6 +1060,229 @@ def plot_advanced_model_comparisons(y_val, y_lr_pred, y_rf_pred, y_xgb_pred, y_l
     plt.close()
 
 
+
+def tune_xgboost():
+    """
+    Hyperparameter tuning for XGBoost using RandomizedSearchCV.
+
+    Uses the same train/val data as train_advanced_models().
+    Saves the best model to ../models/xgboost_tuned.pkl
+    Then runs the full threshold calibration on the tuned model
+    so the threshold JSON is updated to reflect tuned performance.
+
+    Run with: python model_training.py tune
+    """
+    print("=" * 60)
+    print("XGBOOST HYPERPARAMETER TUNING")
+    print("=" * 60)
+
+    # ── Load data (same as train_advanced_models) ──────────────
+    print("\nLoading datasets...")
+    train_df = pd.read_csv('../data/processed/train_processed.csv')
+    val_df   = pd.read_csv('../data/processed/validation.csv')
+
+    X_train = train_df.drop('FraudFound_P', axis=1)
+    y_train = train_df['FraudFound_P']
+    X_val   = val_df.drop('FraudFound_P', axis=1)
+    y_val   = val_df['FraudFound_P']
+
+    # Clean column names (same as train_advanced_models does)
+    X_train = clean_column_names(X_train)
+    X_val   = clean_column_names(X_val)
+
+    print(f"✓ Training: {X_train.shape}")
+    print(f"✓ Validation: {X_val.shape}")
+    print(f"✓ Training fraud rate: {y_train.mean()*100:.2f}%")
+
+    # ── scale_pos_weight is FIXED — always calculated from data ─
+    fraud_count      = y_train.sum()
+    legit_count      = len(y_train) - fraud_count
+    scale_pos_weight = legit_count / fraud_count
+
+    print(f"\n=== CLASS WEIGHT (fixed, not tuned) ===")
+    print(f"scale_pos_weight = {scale_pos_weight:.2f}")
+    print(f"This is calculated from data — we never tune it away from reality")
+
+    # ── Parameter grid ─────────────────────────────────────────
+    # Kept small deliberately — 20 iterations on i5/8GB ≈ 15-25 min
+    param_grid = {
+        # How deep each tree grows — deeper = more complex patterns
+        # but also more overfitting risk
+        'max_depth': [3, 4, 5, 6, 8],
+
+        # How fast the model learns — lower = more trees needed
+        # but usually better generalisation
+        'learning_rate': [0.01, 0.05, 0.1],
+
+        # Number of trees — more trees + lower LR = often better
+        'n_estimators': [100, 200, 300],
+
+        # Fraction of training rows used per tree — adds randomness
+        'subsample': [0.7, 0.8, 0.9],
+
+        # Fraction of features used per tree — reduces correlation between trees
+        'colsample_bytree': [0.7, 0.8, 0.9],
+
+        # Minimum samples needed in a leaf — higher = more conservative splits
+        'min_child_weight': [1, 3, 5],
+
+        # scale_pos_weight is FIXED — always the data-derived value
+        'scale_pos_weight': [scale_pos_weight],
+    }
+
+    # ── Base model — only sets fixed params ───────────────────
+    base_model = XGBClassifier(
+        eval_metric='aucpr',
+        random_state=42,
+        verbosity=0
+    )
+
+    # ── Stratified CV — preserves fraud ratio in each fold ─────
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    # ── RandomizedSearchCV ─────────────────────────────────────
+    # n_iter=20: tries 20 random combinations (not all 1,215 possible)
+    # scoring='f1': CV optimises for F1 — threshold calibration
+    #               happens AFTER on the validation set as always
+    # n_jobs=-1: uses all CPU cores (important )
+    # verbose=2: prints each combination so you see progress
+    search = RandomizedSearchCV(
+        estimator=base_model,
+        param_distributions=param_grid,
+        n_iter=20,
+        scoring='f1',
+        cv=cv,
+        n_jobs=-1,
+        verbose=2,
+        random_state=42,
+        refit=True   # auto-retrains best params on full training set
+    )
+
+    print(f"\n=== STARTING RANDOMIZED SEARCH ===")
+    print(f"Trying 20 combinations × 5-fold CV = 100 model fits")
+    print(f"Expected time on i5/8GB: ~15-25 minutes")
+    print(f"You will see progress printed for each combination...\n")
+
+    search.fit(X_train, y_train)
+
+    # ── Results ────────────────────────────────────────────────
+    print(f"\n=== TUNING COMPLETE ===")
+    print(f"\nBest CV F1-Score: {search.best_score_:.4f}")
+    print(f"\nBest Parameters Found:")
+    for param, value in search.best_params_.items():
+        print(f"  {param}: {value}")
+
+    # Show top 5 combinations for documentation
+    results_df = pd.DataFrame(search.cv_results_)
+    results_df = results_df.sort_values('rank_test_score')
+    print(f"\nTop 5 Combinations:")
+    top5_cols = ['rank_test_score', 'mean_test_score', 'std_test_score',
+                 'param_max_depth', 'param_learning_rate',
+                 'param_n_estimators', 'param_min_child_weight']
+    print(results_df[top5_cols].head(5).to_string(index=False))
+
+    # ── Evaluate best model on validation set ──────────────────
+    print(f"\n=== EVALUATING TUNED MODEL ON VALIDATION SET ===")
+    best_model = search.best_estimator_
+
+    y_proba = best_model.predict_proba(X_val)[:, 1]
+
+    # Run full threshold calibration — updates the JSON with tuned model's thresholds
+    deployed_thresh, y_pred_deployed = optimize_threshold(
+        y_val, y_proba,
+        model_name='xgboost',
+        save_dir='../models'
+    )
+
+    # Load f1_threshold from JSON for fair reporting
+    with open('../models/xgboost_threshold.json', 'r') as f:
+        threshold_data = json.load(f)
+
+    f1_thresh  = threshold_data['f1_threshold']
+    y_pred_f1  = (y_proba >= f1_thresh).astype(int)
+
+    accuracy  = accuracy_score(y_val, y_pred_f1)
+    precision = precision_score(y_val, y_pred_f1)
+    recall    = recall_score(y_val, y_pred_f1)
+    f1        = f1_score(y_val, y_pred_f1)
+    roc_auc   = roc_auc_score(y_val, y_proba)
+
+    print(f"\n--- Tuned Model (F1 threshold = {f1_thresh:.4f}) ---")
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}")
+    print(f"F1-Score:  {f1:.4f}   PRIMARY METRIC")
+    print(f"ROC-AUC:   {roc_auc:.4f}")
+
+    cm_f1 = confusion_matrix(y_val, y_pred_f1)
+    print(f"\nConfusion Matrix (F1 threshold):")
+    print(f"  TN: {cm_f1[0,0]:,}  |  FP: {cm_f1[0,1]:,}")
+    print(f"  FN: {cm_f1[1,0]:,}  |  TP: {cm_f1[1,1]:,}")
+
+    cm_deployed = confusion_matrix(y_val, y_pred_deployed)
+    print(f"\n--- Deployed Performance (recall threshold = {deployed_thresh:.4f}) ---")
+    print(f"  TN: {cm_deployed[0,0]:,}  |  FP: {cm_deployed[0,1]:,}")
+    print(f"  FN: {cm_deployed[1,0]:,}  |  TP: {cm_deployed[1,1]:,}")
+    print(f"  Caught: {cm_deployed[1,1]}/{cm_deployed[1,0]+cm_deployed[1,1]} frauds "
+          f"({cm_deployed[1,1]/(cm_deployed[1,0]+cm_deployed[1,1])*100:.1f}%)")
+    print(f"  Business cost: ${threshold_data['business_cost_deployed']:,.0f}  "
+          f"(saving ${threshold_data['cost_saving_vs_default']:,.0f} vs default)")
+
+    # ── Compare tuned vs baseline XGBoost ──────────────────────
+    print(f"\n=== TUNED vs BASELINE XGBOOST ===")
+    print(f"{'':25s}  {'Baseline':>10}  {'Tuned':>10}  {'Change':>10}")
+    print(f"{'─'*60}")
+    print(f"{'CV F1 (internal)':25s}  {'~0.2547':>10}  {search.best_score_:>10.4f}  "
+          f"  {'+' if search.best_score_ > 0.2547 else ''}{search.best_score_-0.2547:+.4f}")
+    print(f"{'Val F1 (reported)':25s}  {'0.2610':>10}  {f1:>10.4f}  "
+          f"  {'+' if f1 > 0.2610 else ''}{f1-0.2610:+.4f}")
+    print(f"{'ROC-AUC':25s}  {'0.8129':>10}  {roc_auc:>10.4f}  "
+          f"  {'+' if roc_auc > 0.8129 else ''}{roc_auc-0.8129:+.4f}")
+
+    # ── Save tuned model ───────────────────────────────────────
+    os.makedirs('../models', exist_ok=True)
+    joblib.dump(best_model, '../models/xgboost_tuned.pkl')
+    print(f"\n✓ Tuned model saved → ../models/xgboost_tuned.pkl")
+    print(f"✓ Threshold JSON updated → ../models/xgboost_threshold.json")
+
+    # ── Save tuning results for documentation ──────────────────
+    results_df.to_csv('../data/processed/xgb_tuning_results.csv', index=False)
+    print(f"✓ Full tuning results saved → ../data/processed/xgb_tuning_results.csv")
+
+    # ── Save best params as JSON for model card ────────────────
+    best_params_data = {
+        'best_params'   : search.best_params_,
+        'best_cv_f1'    : search.best_score_,
+        'val_f1'        : f1,
+        'val_roc_auc'   : roc_auc,
+        'baseline_cv_f1': 0.2547,
+        'baseline_val_f1': 0.2610,
+        'improvement_cv_f1': search.best_score_ - 0.2547,
+        'improvement_val_f1': f1 - 0.2610,
+        'n_iter': 20,
+        'cv_folds': 5
+    }
+    with open('../models/xgb_best_params.json', 'w') as f:
+        json.dump(best_params_data, f, indent=2)
+    print(f"✓ Best params saved → ../models/xgb_best_params.json")
+
+    print(f"\n{'='*60}")
+    print(f"HYPERPARAMETER TUNING COMPLETE")
+    print(f"{'='*60}")
+
+    # Advice on what to do next
+    if f1 > 0.2610:
+        print(f"\n Tuned model IMPROVED F1 by {f1-0.2610:+.4f}")
+        print(f"   Use xgboost_tuned.pkl as your production model")
+        print(f"   Update your portfolio: report tuned F1 = {f1:.4f}")
+    else:
+        print(f"\n Tuned model did not improve F1 on validation set")
+        print(f"   This is fine — it confirms your baseline was already well-configured")
+        print(f"   Keep xgboost_v1.pkl as production model")
+        print(f"   Portfolio story: 'Tuning confirmed baseline parameters were near-optimal'")
+
+    return best_model, search.best_params_, search.best_score_
+
 def train_advanced_models():
     """Complete advanced model training pipeline"""
     print("="*60)
@@ -1249,28 +1472,41 @@ def predict_with_threshold(model, X, model_name='xgboost', threshold_dir='../mod
 
 if __name__ == "__main__":
     import sys
-    
+
     if len(sys.argv) > 1:
         if sys.argv[1] == 'baseline':
-            # Train baseline models
+            # Train baseline models (LR and RF)
             results = train_baseline_models()
+
         elif sys.argv[1] == 'advanced':
-            # Train advanced models
+            # Train advanced models (XGBoost + LightGBM, threshold calibration)
             results = train_advanced_models()
+
+        elif sys.argv[1] == 'tune':
+            # Hyperparameter tuning for XGBoost
+            # Run AFTER 'advanced' — needs existing data splits
+            best_model, best_params, best_score = tune_xgboost()
+
     else:
         # Default: run data preparation
         input_file = '../data/processed/insurance_claims_engineered.csv'
         output_dir = '../data/processed/'
-        
-        # CORRECTED: Using sampling_method='none' instead of 'smote'
+
         metadata = prepare_training_data(
             input_path=input_file,
             output_dir=output_dir,
-            sampling_method='none',  # CHANGED: No SMOTE, use class weights instead
-            sampling_strategy=0.5,   # Ignored when method='none'
+            sampling_method='none',
+            sampling_strategy=0.5,
             random_state=42
         )
-        
-        print("\n Next steps:")
-        print("   python model_training.py baseline   # Train LR and RF")
-        print("   python model_training.py advanced   # Train XGBoost and LightGBM")
+
+        print("\n Next steps (run in this order):")
+        print("   python model_training.py            # Step 1: Prepare & split data (this script, no args)")
+        print("   python model_training.py baseline   # Step 2: Train LR and RF baselines")
+        print("   python model_training.py advanced   # Step 3: Train XGBoost and LightGBM")
+        print("   python model_training.py tune       # Step 4: Hyperparameter tuning (XGBoost)")
+
+
+
+
+

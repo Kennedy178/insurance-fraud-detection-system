@@ -1,0 +1,20 @@
+{
+  "best_params": {
+    "subsample": 0.8,
+    "scale_pos_weight": 15.708978328173375,
+    "n_estimators": 200,
+    "min_child_weight": 1,
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "colsample_bytree": 0.7
+  },
+  "best_cv_f1": 0.2545247975293079,
+  "val_f1": 0.26171875,
+  "val_roc_auc": 0.8090050498699477,
+  "baseline_cv_f1": 0.2547,
+  "baseline_val_f1": 0.261,
+  "improvement_cv_f1": -0.00017520247069208184,
+  "improvement_val_f1": 0.0007187499999999902,
+  "n_iter": 20,
+  "cv_folds": 5
+}
