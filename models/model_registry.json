@@ -1,0 +1,15 @@
+{
+  "active_model": "fraud_detector_v1",
+  "models": {
+    "fraud_detector_v1": {
+      "model_file": "fraud_detector_v1.joblib",
+      "threshold_file": "xgboost_threshold.json",
+      "metadata_file": "feature_metadata.json",
+      "version": "1.0.0",
+      "status": "production",
+      "deployed_date": "2026-03-08",
+      "roc_auc": 0.781415958687323,
+      "fraud_detection_rate": 0.7246376811594203
+    }
+  }
+}
