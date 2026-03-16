@@ -1,15 +1,13 @@
-# app/main.py
+# app/main.py  (updated Day 16)
 """
 FastAPI application entry point.
 
 Run locally:
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-Then visit:
-    http://localhost:8000          → root
-    http://localhost:8000/health   → health check
-    http://localhost:8000/docs     → Swagger UI  ← most useful during dev
-    http://localhost:8000/redoc    → ReDoc
+Docs:
+    http://localhost:8000/docs     ← Swagger UI
+    http://localhost:8000/redoc    ← ReDoc
 """
 
 import sys
@@ -22,7 +20,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-# ── Make ml_pipeline importable from app/ ─────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -30,20 +27,11 @@ if str(ROOT_DIR) not in sys.path:
 from app.core.config import settings
 from app.core.logging_config import setup_logging
 from app.api.v1.router import api_router
+from app.services.ml_service import init_ml_service
 
-# ── Global model instance ──────────────────────────────────────────────────
-# Loaded once at startup, reused for all requests — never re-loaded per request
-fraud_detector = None
-
-
-# ── Lifespan (replaces deprecated @app.on_event) ──────────────────────────
+# ── Lifespan ───────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Startup: load model into memory.
-    Shutdown: clean up resources.
-    """
-    global fraud_detector
 
     # ── STARTUP ───────────────────────────────────────────────
     setup_logging()
@@ -51,46 +39,40 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.ENVIRONMENT}")
 
     try:
-        from ml_pipeline.inference import FraudDetector
-        fraud_detector = FraudDetector(model_dir=settings.MODEL_DIR)
+        service = init_ml_service()
         logger.info(
-            f"Model loaded | name={fraud_detector.metadata['model_name']} "
-            f"| version={fraud_detector.metadata['model_version']} "
-            f"| threshold={fraud_detector.deployed_threshold:.4f}"
+            f"ML service ready | "
+            f"model={service.detector.metadata['model_name']} | "
+            f"version={service.detector.metadata['model_version']} | "
+            f"threshold={service.detector.deployed_threshold:.4f}"
         )
     except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        logger.warning("API starting without model — prediction endpoints will fail")
+        logger.error(f"ML service failed to start: {e}")
+        logger.warning("API starting in degraded mode — predictions will fail")
 
     logger.info("Startup complete — ready to serve requests")
-
-    yield  # ← app runs here
+    yield
 
     # ── SHUTDOWN ──────────────────────────────────────────────
-    logger.info("Shutting down — cleaning up resources")
-    fraud_detector = None
+    logger.info("Shutting down")
 
 
-# ── App instance ───────────────────────────────────────────────────────────
+# ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title       = settings.APP_NAME,
     version     = settings.APP_VERSION,
     description = (
         "Production-ready insurance fraud detection API. "
         "Powered by XGBoost with business-optimal threshold calibration. "
-        "Catches 72.5% of fraudulent claims with $294,000 verified savings "
-        "per 2,300 claims vs default threshold. "
-        "See /docs for interactive API documentation."
+        "Catches 72.5% of fraudulent claims — $294,000 verified saving "
+        "per 2,300 claims vs default threshold."
     ),
-    docs_url    = "/docs",
-    redoc_url   = "/redoc",
-    lifespan    = lifespan,
+    docs_url  = "/docs",
+    redoc_url = "/redoc",
+    lifespan  = lifespan,
 )
 
-
 # ── Middleware ─────────────────────────────────────────────────────────────
-
-# CORS — allow React dev servers and production frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins     = settings.allowed_origins_list,
@@ -99,23 +81,14 @@ app.add_middleware(
     allow_headers     = ["*"],
 )
 
-
-# Request logging middleware — logs every request with timing
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start    = time.perf_counter()
     response = await call_next(request)
     elapsed  = (time.perf_counter() - start) * 1000
-
-    logger.info(
-        f"{request.method} {request.url.path} "
-        f"→ {response.status_code} "
-        f"({elapsed:.1f}ms)"
-    )
+    logger.info(f"{request.method} {request.url.path} → {response.status_code} ({elapsed:.1f}ms)")
     return response
 
-
-# Security headers middleware
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -126,26 +99,18 @@ async def add_security_headers(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     return response
 
-
-# ── Global exception handler ───────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc} | path={request.url.path}")
     return JSONResponse(
         status_code=500,
-        content={
-            "error"  : "Internal server error",
-            "detail" : "An unexpected error occurred. Check server logs.",
-            "path"   : str(request.url.path),
-        }
+        content={"error": "Internal server error", "path": str(request.url.path)},
     )
-
 
 # ── Routers ────────────────────────────────────────────────────────────────
 app.include_router(api_router)
 
-
-# ── Root endpoint ──────────────────────────────────────────────────────────
+# ── Root ───────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Root"])
 async def root():
     return {

@@ -11,7 +11,7 @@ What this produces:
     models/feature_metadata.json      ← feature list, dtypes, preprocessing steps
     models/model_registry.json        ← single source of truth for all model paths
 
-Note on preprocessor:
+Note on preprocessor:-for future reference
     XGBoost with scale_pos_weight does NOT need StandardScaler — tree-based
     models are invariant to feature scaling. Saving a scaler here would be
     misleading. Instead we save feature metadata which the inference module

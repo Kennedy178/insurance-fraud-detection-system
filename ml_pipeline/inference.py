@@ -88,7 +88,7 @@ class FraudDetector:
         self.feature_names      = self.metadata['feature_names']
         self._loaded            = True
 
-        print(f"✓ FraudDetector loaded")
+        print(f"FraudDetector loaded")
         print(f"  Model:     {self.metadata['model_name']} v{self.metadata['model_version']}")
         print(f"  Features:  {len(self.feature_names)}")
         print(f"  Threshold: {self.deployed_threshold:.4f} (deployed/business-optimal)")
@@ -230,7 +230,7 @@ class FraudDetector:
 
     def calculate_risk_score(self, fraud_probability: float) -> int:
         """
-        Convert raw fraud probability (0-1) → risk score (0-100).
+        Convert raw fraud probability (0-1) - risk score (0-100).
         Linear scaling — simple, transparent, easy to explain.
 
         0-30:  Low risk (green)
@@ -241,7 +241,7 @@ class FraudDetector:
 
     def get_confidence_level(self, fraud_probability: float) -> str:
         """
-        Translate probability distance from threshold → confidence string.
+        Translate probability distance from threshold - confidence string.
         Close to threshold = low confidence. Far from it = high confidence.
         """
         distance = abs(fraud_probability - self.deployed_threshold)
@@ -462,7 +462,7 @@ def run_inference_tests():
     print("\n" + "="*60)
     print("INFERENCE MODULE TEST COMPLETE")
     print("="*60)
-    print(f"\n✅ All tests passed")
+    print(f"\n All tests passed")
     print(f"   inference.py is ready for import by app/services/ml_service.py")
 
 
