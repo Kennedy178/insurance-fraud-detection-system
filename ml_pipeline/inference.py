@@ -183,6 +183,36 @@ class FraudDetector:
             risk_factors      = risk_factors,
             inference_ms      = elapsed_ms,
         )
+    
+    def predict_from_df(self, X: pd.DataFrame) -> Dict:
+        """
+        Run inference on an already-engineered feature DataFrame.
+        Called by ml_service.py which does its own feature engineering
+        via feature_service.py — skips preprocess_input entirely.
+
+        Args:
+            X: DataFrame with exactly 76 features in training column order
+            (already produced by FeatureService.transform())
+        """
+        start = time.perf_counter()
+
+        fraud_probability = float(self.model.predict_proba(X)[:, 1][0])
+        is_fraud          = bool(fraud_probability >= self.deployed_threshold)
+        risk_score        = self.calculate_risk_score(fraud_probability)
+        confidence        = self.get_confidence_level(fraud_probability)
+        risk_level        = self.get_risk_level(risk_score)
+        risk_factors      = self.extract_risk_factors(X)
+        elapsed_ms        = (time.perf_counter() - start) * 1000
+
+        return self.format_output(
+            fraud_probability = fraud_probability,
+            is_fraud          = is_fraud,
+            risk_score        = risk_score,
+            confidence        = confidence,
+            risk_level        = risk_level,
+            risk_factors      = risk_factors,
+            inference_ms      = elapsed_ms,
+        )
 
     def predict_batch(self, claims: List[Dict]) -> List[Dict]:
         """

@@ -1,212 +1,106 @@
 # app/models/claim.py
 """
-Pydantic schemas for claim input and output.
-
-ClaimInput covers the core raw fields an investigator would submit.
-The feature engineering pipeline (app/services/feature_service.py, Day 16)
-transforms these into the 76 features the model expects.
-
-Field names match the original dataset columns before encoding —
-the API accepts human-readable values, not one-hot encoded arrays.
+Pydantic schema for claim input.
+Field names and value formats match the original dataset exactly —
+feature_service.py depends on these precise names and string values.
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from typing import Optional
-from enum import Enum
 
-
-# ── Enums for constrained string fields ───────────────────────────────────
-
-class FaultEnum(str, Enum):
-    policy_holder = "Policy Holder"
-    third_party   = "Third Party"
-
-class PolicyTypeEnum(str, Enum):
-    sedan_liability  = "Sedan - Liability"
-    sedan_collision  = "Sedan - Collision"
-    sport_liability  = "Sport - Liability"
-    sport_collision  = "Sport - Collision"
-    utility_liability = "Utility - Liability"
-    utility_collision = "Utility - Collision"
-
-class VehicleCategoryEnum(str, Enum):
-    sedan   = "Sedan"
-    sport   = "Sport"
-    utility = "Utility"
-
-class BasePolicyEnum(str, Enum):
-    liability  = "Liability"
-    collision  = "Collision"
-    all_perils = "All Perils"
-
-class AccidentAreaEnum(str, Enum):
-    urban = "Urban"
-    rural = "Rural"
-
-class IncidentCauseEnum(str, Enum):
-    rear_collision    = "Rear Collision"
-    left_turn         = "Left Turn"
-    right_turn        = "Right Turn"
-    front_collision   = "Front Collision"
-    parked_bike       = "Parked Car"
-    other             = "Other"
-
-class AgentTypeEnum(str, Enum):
-    internal = "Internal"
-    external = "External"
-
-class AddressChangeEnum(str, Enum):
-    no_change   = "no change"
-    under_6_months = "under 6 months"
-    one_year    = "1 year"
-    two_to_three = "2 to 3 years"
-    four_to_eight = "4 to 8 years"
-
-class NumberOfCarsEnum(str, Enum):
-    one    = "1 vehicle"
-    two    = "2 vehicles"
-    three  = "3 to 4"
-    five   = "5 to 8"
-    more   = "more than 8"
-
-
-# ── Main input schema ──────────────────────────────────────────────────────
 
 class ClaimInput(BaseModel):
     """
-    Raw claim fields submitted by the investigator via API.
-    All fields are optional with sensible defaults — the model
-    handles missing features gracefully (filled with 0 after encoding).
-    Required fields are marked explicitly.
+    Raw claim fields exactly as the original dataset columns.
+    feature_service.py reads these keys by name — do not rename them.
     """
 
-    # ── Policy & Vehicle ──────────────────────────────────────
-    policy_number: Optional[str] = Field(
-        None, description="Policy number for tracking (not used in model)"
-    )
-    vehicle_category: Optional[VehicleCategoryEnum] = Field(
-        None, description="Type of vehicle"
-    )
-    base_policy: Optional[BasePolicyEnum] = Field(
-        None, description="Base policy type"
-    )
-    policy_type: Optional[PolicyTypeEnum] = Field(
-        None, description="Full policy type (vehicle + coverage)"
-    )
-    deductible: Optional[int] = Field(
-        None, ge=0, le=10000, description="Policy deductible amount ($)"
-    )
+    # ── Temporal ──────────────────────────────────────────────
+    Month: Optional[str]              = Field(None, description="Month of accident e.g. Jan, Feb")
+    WeekOfMonth: Optional[int]        = Field(None, ge=1, le=5)
+    DayOfWeek: Optional[str]          = Field(None, description="Monday, Tuesday ...")
+    MonthClaimed: Optional[str]       = Field(None, description="Month claim filed e.g. Jan")
+    WeekOfMonthClaimed: Optional[int] = Field(None, ge=1, le=5)
+    DayOfWeekClaimed: Optional[str]   = Field(None, description="Monday, Tuesday ...")
 
     # ── Claimant ──────────────────────────────────────────────
-    age: Optional[int] = Field(
-        None, ge=16, le=100, description="Claimant age"
-    )
-    driver_rating: Optional[int] = Field(
-        None, ge=1, le=4, description="Driver risk rating (1=best, 4=worst)"
-    )
+    Sex: Optional[str]                = Field(None, description="Male or Female")
+    MaritalStatus: Optional[str]      = Field(None, description="Single, Married, Widow, Divorced")
+    Age: Optional[int]                = Field(None, ge=16, le=100)
+    DriverRating: Optional[int]       = Field(None, ge=1, le=4)
+
+    # ── Vehicle ───────────────────────────────────────────────
+    Make: Optional[str]               = Field(None, description="Honda, Toyota, BMW ...")
+    VehicleCategory: Optional[str]    = Field(None, description="Sedan, Sport, Utility")
+    VehiclePrice: Optional[str]       = Field(None, description="e.g. 20,000 to 29,000")
+    AgeOfVehicle: Optional[str]       = Field(None, description="e.g. 3 years, new, more than 7")
+    AgeOfPolicyHolder: Optional[str]  = Field(None, description="e.g. 26 to 30, 31 to 35")
+
+    # ── Policy ────────────────────────────────────────────────
+    PolicyType: Optional[str]         = Field(None, description="e.g. Sedan - Liability")
+    BasePolicy: Optional[str]         = Field(None, description="Liability, Collision, All Perils")
+    Deductible: Optional[int]         = Field(None, ge=0, le=10000)
 
     # ── Incident ──────────────────────────────────────────────
-    accident_area: Optional[AccidentAreaEnum] = Field(
-        None, description="Urban or Rural"
-    )
-    fault: Optional[FaultEnum] = Field(
-        None, description="Who is at fault"
-    )
-    incident_cause: Optional[IncidentCauseEnum] = Field(
-        None, description="Cause of incident"
-    )
-    number_of_cars: Optional[NumberOfCarsEnum] = Field(
-        None, description="Number of cars involved"
-    )
-    number_of_supplements: Optional[int] = Field(
-        None, ge=0, le=20, description="Number of supplement claims"
-    )
-    address_change_claim: Optional[AddressChangeEnum] = Field(
-        None, description="Address changes in claim period"
-    )
+    AccidentArea: Optional[str]       = Field(None, description="Urban or Rural")
+    Fault: Optional[str]              = Field(None, description="Policy Holder or Third Party")
+    AgentType: Optional[str]          = Field(None, description="Internal or External")
 
-    # ── Claim details ─────────────────────────────────────────
-    claim_date_month: Optional[int] = Field(
-        None, ge=1, le=12, description="Month claim was filed (1-12)"
-    )
-    week_of_month_claimed: Optional[int] = Field(
-        None, ge=1, le=5, description="Week of month claim was filed"
-    )
-    day_of_week_claimed: Optional[str] = Field(
-        None, description="Day of week claim was filed"
-    )
-    month_claimed: Optional[int] = Field(
-        None, ge=1, le=12, description="Month of incident (1-12)"
-    )
-    week_of_month: Optional[int] = Field(
-        None, ge=1, le=5, description="Week of month of incident"
-    )
-    day_of_week: Optional[str] = Field(
-        None, description="Day of week of incident"
-    )
+    # ── Claim history ─────────────────────────────────────────
+    PoliceReportFiled: Optional[str]  = Field(None, description="Yes or No")
+    WitnessPresent: Optional[str]     = Field(None, description="Yes or No")
+    PastNumberOfClaims: Optional[str] = Field(None, description="none, 1, 2 to 4, more than 4")
+    NumberOfSuppliments: Optional[str]= Field(None, description="none, 1 to 2, 3 to 5, more than 5")
+    NumberOfCars: Optional[str]       = Field(None, description="1 vehicle, 2 vehicles, 3 to 4 ...")
 
-    # ── Agent ─────────────────────────────────────────────────
-    agent_type: Optional[AgentTypeEnum] = Field(
-        None, description="Internal or external agent handling the claim"
+    # ── Fields with special characters (kept as-is) ───────────
+    # Note: JSON keys can contain colons and hyphens fine
+    Days_Policy_Accident: Optional[str] = Field(
+        None, alias="Days:Policy-Accident",
+        description="none, 1 to 7, 8 to 15, 15 to 30, more than 30"
     )
-
-    # ── Additional features ───────────────────────────────────
-    past_number_of_claims: Optional[str] = Field(
-        None, description="Previous claims history"
+    Days_Policy_Claim: Optional[str] = Field(
+        None, alias="Days:Policy-Claim",
+        description="none, 8 to 15, 15 to 30, more than 30"
     )
-    police_report_filed: Optional[str] = Field(
-        None, description="Was a police report filed? (Yes/No)"
+    AddressChange_Claim: Optional[str] = Field(
+        None, alias="AddressChange-Claim",
+        description="no change, under 6 months, 1 year, 2 to 3 years, 4 to 8 years"
     )
-    witnesses: Optional[int] = Field(
-        None, ge=0, le=10, description="Number of witnesses"
-    )
-    vehicle_price: Optional[str] = Field(
-        None, description="Vehicle price range"
-    )
-    days_policy_accident: Optional[str] = Field(
-        None, description="Days between policy start and accident"
-    )
-    days_policy_claim: Optional[str] = Field(
-        None, description="Days between policy start and claim"
-    )
-    year: Optional[int] = Field(
-        None, ge=1990, le=2030, description="Year of claim"
-    )
-    make: Optional[str] = Field(
-        None, description="Vehicle make"
-    )
-
-    @field_validator('age')
-    @classmethod
-    def age_must_be_valid(cls, v):
-        if v is not None and (v < 16 or v > 100):
-            raise ValueError('Age must be between 16 and 100')
-        return v
-
-    @field_validator('deductible')
-    @classmethod
-    def deductible_must_be_positive(cls, v):
-        if v is not None and v < 0:
-            raise ValueError('Deductible must be non-negative')
-        return v
 
     model_config = {
+        "populate_by_name": True,
         "json_schema_extra": {
-            "example": {
-                "policy_number": "POL-2024-001",
-                "vehicle_category": "Sedan",
-                "base_policy": "Liability",
-                "policy_type": "Sedan - Liability",
-                "deductible": 400,
-                "age": 34,
-                "driver_rating": 3,
-                "accident_area": "Urban",
-                "fault": "Policy Holder",
-                "incident_cause": "Rear Collision",
-                "agent_type": "External",
-                "claim_date_month": 3,
-                "witnesses": 1,
-                "police_report_filed": "No",
-            }
-        }
+    "example": {
+        "Month": "Jun",
+        "WeekOfMonth": 1,
+        "DayOfWeek": "Thursday",
+        "MonthClaimed": "Jun",
+        "WeekOfMonthClaimed": 1,
+        "DayOfWeekClaimed": "Thursday",
+        "Sex": "Male",
+        "MaritalStatus": "Married",
+        "Age": 28,
+        "DriverRating": 2,
+        "Make": "Honda",
+        "VehicleCategory": "Sedan",
+        "VehiclePrice": "20,000 to 29,000",
+        "AgeOfVehicle": "3 years",
+        "AgeOfPolicyHolder": "26 to 30",
+        "PolicyType": "Sedan - Collision",
+        "BasePolicy": "Collision",
+        "Deductible": 400,
+        "AccidentArea": "Rural",
+        "Fault": "Policy Holder",
+        "AgentType": "External",
+        "PoliceReportFiled": "No",
+        "WitnessPresent": "No",
+        "PastNumberOfClaims": "none",
+        "NumberOfSuppliments": "more than 5",
+        "NumberOfCars": "1 vehicle",
+        "Days:Policy-Accident": "8 to 15",
+        "Days:Policy-Claim": "8 to 15",
+        "AddressChange-Claim": "1 year"
+    }
+}
     }

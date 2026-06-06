@@ -1,0 +1,10 @@
+{
+  "deployed_threshold": 0.5500000000000002,
+  "val_f1": 0.27692307692307694,
+  "test_f1": 0.25219941348973607,
+  "test_recall": 0.3115942028985507,
+  "test_precision": 0.21182266009852216,
+  "test_roc_auc": 0.7986006996501749,
+  "model_version": "2.0.0",
+  "training_note": "No SMOTE, scale_pos_weight=15.7, early stopping on val set"
+}

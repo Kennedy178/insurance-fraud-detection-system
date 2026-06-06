@@ -106,10 +106,10 @@ class FraudDetectionService:
         # Step 2 — inference (FraudDetector takes a dict, not DataFrame)
         # Pass the processed features as a dict — inference.py's preprocess_input
         # will align columns (they're already aligned, so it's a no-op effectively)
-        feature_dict = X.iloc[0].to_dict()
+        
 
         try:
-            result = self.detector.predict(feature_dict)
+            result = self.detector.predict_from_df(X)
         except Exception as e:
             logger.error(f"Model inference failed: {e}")
             raise ValueError(f"Inference error: {e}")
