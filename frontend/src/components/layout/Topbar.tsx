@@ -1,5 +1,4 @@
 import { useLocation } from "react-router-dom";
-import { ChevronRight } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
 
 const ROUTE_LABELS: Record<string, string> = {
