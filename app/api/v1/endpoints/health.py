@@ -1,7 +1,8 @@
-# app/api/v1/endpoints/health.py  (fixed Day 16)
+# app/api/v1/endpoints/health.py
 """
 Health and status endpoints.
-GET /health          — lightweight liveness check (<10ms target)
+GET /health          — kept for Render uptime monitoring
+GET /api/v1/ping     — frontend uses this (bypasses ad-blocker blocklists)
 GET /api/v1/status   — detailed system status
 """
 
@@ -16,14 +17,8 @@ router = APIRouter()
 _startup_time = time.time()
 
 
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Health check",
-    description="Lightweight liveness check. Returns 200 if API is running.",
-    tags=["Health"],
-)
-async def health_check():
+async def _get_health_response() -> HealthResponse:
+    """Shared logic for both health endpoints."""
     from app.services.ml_service import get_ml_service
     try:
         service = get_ml_service()
@@ -41,9 +36,28 @@ async def health_check():
 
 
 @router.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Health check (for Render monitoring)",
+    tags=["Health"],
+)
+async def health_check():
+    return await _get_health_response()
+
+
+@router.get(
+    "/api/v1/ping",
+    response_model=HealthResponse,
+    summary="Ping (frontend status check — ad-blocker safe)",
+    tags=["Health"],
+)
+async def ping():
+    return await _get_health_response()
+
+
+@router.get(
     "/api/v1/status",
     summary="Detailed system status",
-    description="Full system status including model info and config.",
     tags=["Health"],
 )
 async def system_status():
@@ -63,7 +77,7 @@ async def system_status():
         model_loaded = False
         model_info   = {"loaded": False}
 
-    status = {
+    return {
         "api": {
             "status"     : "ok",
             "version"    : settings.APP_VERSION,
@@ -71,9 +85,6 @@ async def system_status():
             "uptime_s"   : round(time.time() - _startup_time, 1),
         },
         "model"   : model_info,
-        "database": {"status": "not_configured"},  # Day 18
-        "cache"   : {"status": "not_configured"},  # Day 19
+        "database": {"status": "configured"},
+        "cache"   : {"status": "not_configured"},
     }
-
-    logger.info(f"Status check | model_loaded={model_loaded}")
-    return status

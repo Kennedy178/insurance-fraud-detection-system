@@ -11,7 +11,6 @@ import type {
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
-// Generic fetch wrapper with typed response and proper error handling
 async function apiFetch<T>(
   path: string,
   options?: RequestInit
@@ -39,7 +38,6 @@ async function apiFetch<T>(
   return response.json() as Promise<T>;
 }
 
-// Submit a single claim for fraud prediction
 export async function predictClaim(
   claim: ClaimInput
 ): Promise<PredictionResponse> {
@@ -49,7 +47,6 @@ export async function predictClaim(
   });
 }
 
-// Fetch recent predictions - unwraps the { count, predictions } wrapper
 export async function getPredictions(
   limit = 20,
   offset = 0
@@ -60,17 +57,15 @@ export async function getPredictions(
   return data.predictions;
 }
 
-// Fetch analytics summary and daily trend
 export async function getStats(): Promise<StatsResponse> {
   return apiFetch<StatsResponse>("/api/v1/stats");
 }
 
-// Fetch model metadata
 export async function getModelInfo(): Promise<ModelInfoResponse> {
   return apiFetch<ModelInfoResponse>("/api/v1/model/info");
 }
 
-// Health check
+// Calls /api/v1/ping instead of /health to avoid ad-blocker blocklists
 export async function getHealth(): Promise<HealthResponse> {
-  return apiFetch<HealthResponse>("/health");
+  return apiFetch<HealthResponse>("/api/v1/ping");
 }
