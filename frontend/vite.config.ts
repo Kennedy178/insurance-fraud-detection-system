@@ -13,7 +13,7 @@ export default defineConfig({
         "icons/*.png",
       ],
       manifest: {
-        name: "FraudGuard - Insurance Fraud Detection",
+        name: "FraudGuard",
         short_name: "FraudGuard",
         description:
           "Real-time insurance claim fraud detection powered by XGBoost ML",
